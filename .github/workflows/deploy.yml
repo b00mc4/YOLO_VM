@@ -1,0 +1,24 @@
+name: Auto Deploy to VM
+
+on:
+  push:
+    branches:
+      - main # ทำงานเมื่อมีการ push โค้ดเข้า branch main
+
+jobs:
+  deploy:
+    runs-on: self-hosted # ระบุให้ใช้ Runner บน VM ของเราที่เพิ่งตั้งค่าไป
+    
+    steps:
+      - name: Pull latest code and restart Docker
+        run: |
+          # เข้าไปที่โฟลเดอร์โปรเจคบน VM
+          cd /home/trainee/YOLO
+          
+          # ดึงโค้ดล่าสุดจาก GitHub
+          git pull origin main
+          
+          # รีสตาร์ท Docker (ปิดของเก่า สร้างของใหม่)
+          docker compose down
+          docker compose up -d --build
+
