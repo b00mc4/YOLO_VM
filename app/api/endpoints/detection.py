@@ -24,6 +24,7 @@ from app.services import detection_service
 import logging
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from app.core.error_messages import DetectionErrors
+from app.core.rate_limit import get_rate_limiter, RateLimitExceeded
 
 router = APIRouter(prefix="/detections", tags=["detections"])
 
@@ -75,6 +76,17 @@ async def _handle_real_detection(
 
     raw_event_id = form.get("event_id")
     raw_camera_id = form.get("camera_id")
+
+    if raw_camera_id and isinstance(raw_camera_id, str):
+        limiter = get_rate_limiter()
+        try:
+            limiter.check(f"detection_camera:{raw_camera_id}", limit=200, window_seconds=60.0)
+        except RateLimitExceeded as e:
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"detail": "Too many requests for this camera"},
+                headers={"Retry-After": str(int(e.retry_after_seconds) + 1)},
+            )
 
     is_test = _is_webhook_test(raw_event_id, raw_camera_id)
     logger.debug("is_test=%s event_id=%r camera_id=%r", is_test, raw_event_id, raw_camera_id)

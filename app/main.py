@@ -150,7 +150,11 @@ async def security_middleware(request: Request, call_next):
                 content={"detail": f"ขนาดข้อมูลใหญ่เกินไป (สูงสุด {_MAX_PAYLOAD_SIZE_BYTES // (1024 * 1024)}MB)"}
             )
 
-    if not request.url.path.startswith("/health") and not request.url.path.startswith("/api/sse"):
+    is_health = request.url.path.startswith("/health")
+    is_sse = request.url.path.startswith("/api/sse")
+    is_post_detection = request.url.path.rstrip("/") == "/api/detections" and request.method == "POST"
+
+    if not is_health and not is_sse and not is_post_detection:
         client_ip = request.client.host if request.client else "127.0.0.1"
         limiter = get_rate_limiter()
         try:
