@@ -39,6 +39,7 @@ def _revalidation_due(last_revalidated_at: float) -> bool:
 
 
 async def _base_event_generator(request: Request, user_id: uuid.UUID, village_id: uuid.UUID | None, ticket_password_changed_at: datetime, queue: asyncio.Queue | None):
+    yield {"event": "padding", "data": " " * 4096}
     last_revalidated_at = monotonic()
     while True:
         if _revalidation_due(last_revalidated_at):
@@ -49,9 +50,6 @@ async def _base_event_generator(request: Request, user_id: uuid.UUID, village_id
         if queue is None:
             await asyncio.sleep(_PING_INTERVAL_SECONDS)
             continue
-
-        if await request.is_disconnected():
-            break
 
         try:
             event = await asyncio.wait_for(queue.get(), timeout=_PING_INTERVAL_SECONDS)
@@ -157,7 +155,7 @@ async def multiplex_stream(
     if not (alerts_active or security_active or presence_active):
         raise HTTPException(status_code=400, detail="At least one ticket must be provided")
 
-    master_queue = asyncio.Queue()
+    master_queue = asyncio.Queue(maxsize=settings.channel_queue_size)
     
     if user_id:
         user_streams = _active_streams[user_id]
@@ -165,11 +163,13 @@ async def multiplex_stream(
         limit = settings.channel_max_connections_per_user
         while len(user_streams) > limit:
             oldest_q = user_streams.popleft()
-            try:
-                oldest_q.put_nowait({"event": "force_close", "data": "Too many connections"})
-                oldest_q.put_nowait(CLOSE_SENTINEL)
-            except asyncio.QueueFull:
-                pass
+            while True:
+                try:
+                    oldest_q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            oldest_q.put_nowait({"event": "force_close", "data": "Too many connections"})
+            oldest_q.put_nowait(CLOSE_SENTINEL)
 
     async def forwarder(q: asyncio.Queue):
         try:
@@ -189,7 +189,11 @@ async def multiplex_stream(
 
     async def event_generator():
         try:
+            print(f"[SSE] Starting event generator for user {user_id}")
+            yield {"event": "padding", "data": " " * 4096}
+
             if initial_snapshot is not None:
+                print(f"[SSE] Yielding initial snapshot for user {user_id}")
                 yield {
                     "event": "presence_update",
                     "data": json.dumps(initial_snapshot, default=str),
@@ -199,18 +203,19 @@ async def multiplex_stream(
             while True:
                 if _revalidation_due(last_revalidated_at):
                     if not await session_validation_service.is_session_still_valid(user_id, village_id, password_changed_at):
+                        print(f"[SSE] Session invalid for user {user_id}")
                         break
                     last_revalidated_at = monotonic()
-
-                if await request.is_disconnected():
-                    break
 
                 try:
                     event = await asyncio.wait_for(master_queue.get(), timeout=_PING_INTERVAL_SECONDS)
                     if event is CLOSE_SENTINEL:
+                        print(f"[SSE] CLOSE_SENTINEL received for user {user_id}")
                         break
+                    print(f"[SSE] Yielding {event['event']} for user {user_id}")
                     yield {"event": event["event"], "data": json.dumps(event["data"], default=str)}
                 except asyncio.TimeoutError:
+                    print(f"[SSE] Yielding ping for user {user_id}")
                     yield {"event": "ping", "data": ""}
         finally:
             if user_id:
@@ -232,4 +237,25 @@ async def multiplex_stream(
                 presence_service.unregister_watcher(presence_ticket_data, presence_q)
                 await presence_service.unregister_connection(presence_conn_id)
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        event_generator(),
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        }
+    )
+
+@router.get("/test")
+async def sse_test(request: Request):
+    async def event_generator():
+        yield {"event": "padding", "data": " " * 4096}
+        for i in range(5):
+            yield {"event": "test", "data": f"message {i}"}
+            await asyncio.sleep(1)
+    return EventSourceResponse(
+        event_generator(),
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        }
+    )

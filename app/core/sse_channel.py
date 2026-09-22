@@ -124,16 +124,20 @@ class SSEChannel:
             self._subscribers.pop(village_id, None)
 
     async def publish(self, village_id: uuid.UUID, event: str, data: dict) -> None:
-        subscribers = self._subscribers.get(village_id)
-        if not subscribers:
-            return
-
         item = {"event": event, "data": data}
-        dead = [queue for queue in list(subscribers) if not try_emit(queue, item)]
-        for queue in dead:
-            subscribers.discard(queue)
-        if not subscribers:
-            self._subscribers.pop(village_id, None)
+
+        subscribers = self._subscribers.get(village_id)
+        if subscribers:
+            dead = [queue for queue in list(subscribers) if not try_emit(queue, item)]
+            for queue in dead:
+                subscribers.discard(queue)
+            if not subscribers:
+                self._subscribers.pop(village_id, None)
+
+        if self._global_subscribers:
+            dead_global = [queue for queue in list(self._global_subscribers) if not try_emit(queue, item)]
+            for queue in dead_global:
+                self._global_subscribers.discard(queue)
 
     async def publish_global(self, event: str, data: dict) -> None:
         if not self._global_subscribers:
