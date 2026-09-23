@@ -65,15 +65,6 @@ async def _handle_real_detection(
 ) -> JSONResponse:
     form = await request.form()
 
-    image_crop = form.get("image_crop")
-    image_full = form.get("image_full")
-
-    if not isinstance(image_crop, StarletteUploadFile) or not isinstance(image_full, StarletteUploadFile):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=DetectionErrors.REQUIRED_FILES_MISSING,
-        )
-
     raw_event_id = form.get("event_id")
     raw_camera_id = form.get("camera_id")
 
@@ -87,6 +78,15 @@ async def _handle_real_detection(
                 content={"detail": "Too many requests for this camera"},
                 headers={"Retry-After": str(int(e.retry_after_seconds) + 1)},
             )
+
+    image_crop = form.get("image_crop")
+    image_full = form.get("image_full")
+
+    if not isinstance(image_crop, StarletteUploadFile) or not isinstance(image_full, StarletteUploadFile):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=DetectionErrors.REQUIRED_FILES_MISSING,
+        )
 
     is_test = _is_webhook_test(raw_event_id, raw_camera_id)
     logger.debug("is_test=%s event_id=%r camera_id=%r", is_test, raw_event_id, raw_camera_id)

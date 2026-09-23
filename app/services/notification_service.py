@@ -90,7 +90,7 @@ async def list_notifications(
     stmt = (
         select(Notification)
         .where(*filters)
-        .order_by(Notification.created_at.desc())
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
