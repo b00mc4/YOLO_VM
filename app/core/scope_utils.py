@@ -33,6 +33,11 @@ async def resolve_village_id(
                 detail=Auth.VILLAGE_INACTIVE,
             )
         return requested_village_id
+    if requested_village_id is not None and requested_village_id != current_user.village_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=Common.VILLAGE_ID_NOT_ALLOWED_FOR_ROLE,
+        )
     return current_user.village_id
 
 

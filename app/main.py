@@ -13,7 +13,7 @@ from app.schemas.common import ErrorResponse
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.db.session import async_session_maker, engine
-from app.services import ai_vision_service, auth_service, camera_service, camera_verification_service, mediamtx_service, notification_service, detection_service
+from app.services import ai_vision_service, auth_service, camera_service, camera_verification_service, mediamtx_service
 
 _AUTH_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 

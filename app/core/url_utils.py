@@ -2,7 +2,6 @@ from __future__ import annotations
 import asyncio
 from urllib.parse import quote, urlsplit, urlunsplit, urlparse
 from app.core.error_messages import CameraErrors
-import asyncio
 
 _ALLOWED_SCHEMES = ("rtsp", "rtsps")
 
@@ -76,11 +75,10 @@ async def check_rtsp_stream(url: str, timeout: float = 2.0) -> bool:
             f"User-Agent: LPR-Checker\r\n\r\n"
         )
         writer.write(request.encode('utf-8'))
-        await writer.drain()
+        await asyncio.wait_for(writer.drain(), timeout=timeout)
 
         response = await asyncio.wait_for(reader.read(1024), timeout=timeout)
         writer.close()
-        await writer.wait_closed()
         
         if not response:
             return False
