@@ -178,30 +178,6 @@ async def _trigger_on_demand_pull(camera_id: uuid.UUID) -> None:
         logger.warning("MediaMTX trigger pull failed for camera %s: %s", camera_id, exc)
 
 
-async def _wait_for_ready_after_trigger(camera_id: uuid.UUID) -> bool:
-    await _trigger_on_demand_pull(camera_id)
-
-    elapsed = 0.0
-    while elapsed < _COLD_START_MAX_WAIT_SECONDS:
-        await asyncio.sleep(_COLD_START_POLL_INTERVAL_SECONDS)
-        elapsed += _COLD_START_POLL_INTERVAL_SECONDS
-
-        info = await _get_path_info(camera_id)
-        if info is not None and info.get("exists") and info.get("ready"):
-            return True
-
-    return False
-
-
-async def _confirm_bytes_flowing(camera_id: uuid.UUID, baseline_bytes: int) -> bool:
-    await asyncio.sleep(_BYTES_CONFIRM_WINDOW_SECONDS)
-
-    info = await _get_path_info(camera_id)
-    if info is None or not info.get("exists"):
-        return False
-
-    return info["bytes_received"] > baseline_bytes
-
 
 _ALIVE_CACHE: dict[str, dict] = {}
 _ALIVE_CACHE_TTL = 3.0

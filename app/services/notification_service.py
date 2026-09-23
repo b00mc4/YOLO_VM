@@ -143,10 +143,3 @@ async def mark_all_notifications_read(db: AsyncSession, current_user: User) -> i
     )
     await db.commit()
     return result.rowcount or 0
-
-
-async def cleanup_old_notifications(db: AsyncSession) -> int:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=_RETENTION_DAYS)
-    result = await db.execute(delete(Notification).where(Notification.created_at < cutoff))
-    await db.commit()
-    return result.rowcount or 0

@@ -134,10 +134,6 @@ class SSEChannel:
             if not subscribers:
                 self._subscribers.pop(village_id, None)
 
-        if self._global_subscribers:
-            dead_global = [queue for queue in list(self._global_subscribers) if not try_emit(queue, item)]
-            for queue in dead_global:
-                self._global_subscribers.discard(queue)
 
     async def publish_global(self, event: str, data: dict) -> None:
         if not self._global_subscribers:

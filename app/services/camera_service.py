@@ -112,15 +112,13 @@ async def notify_sync_failure(
 
     from app.services import channel_service
 
-    await channel_service.alerts.publish(
-        village_id,
-        "camera_sync_failed",
-        {
-            "camera_id": str(camera_id),
-            "camera_name": camera_name,
-            "failed_services": failed_services,
-        },
-    )
+    payload = {
+        "camera_id": str(camera_id),
+        "camera_name": camera_name,
+        "failed_services": failed_services,
+    }
+    await channel_service.alerts.publish(village_id, "camera_sync_failed", payload)
+    await channel_service.alerts.publish_global("camera_sync_failed", {**payload, "village_id": str(village_id)})
 
 async def _sync_camera_create(
     camera_id: uuid.UUID,
@@ -868,11 +866,9 @@ async def check_and_update_camera_statuses(db: AsyncSession) -> int:
             updates_made += 1
             
             # Real-time update to dashboard
-            await channel_service.alerts.publish(
-                camera.village_id,
-                "camera_status_changed",
-                {"camera_id": str(camera.id), "is_online": is_online}
-            )
+            payload = {"camera_id": str(camera.id), "is_online": is_online}
+            await channel_service.alerts.publish(camera.village_id, "camera_status_changed", payload)
+            await channel_service.alerts.publish_global("camera_status_changed", {**payload, "village_id": str(camera.village_id)})
 
     if updates_made > 0:
         await db.commit()

@@ -13,7 +13,7 @@ from app.schemas.common import ErrorResponse
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.db.session import async_session_maker, engine
-from app.services import ai_vision_service, auth_service, camera_service, camera_verification_service, mediamtx_service
+from app.services import ai_vision_service, auth_service, camera_service, camera_verification_service, mediamtx_service, detection_service
 
 _AUTH_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
@@ -106,9 +106,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     app.state.camera_status_task = camera_status_task
 
+    cleanup_images_task = asyncio.create_task(
+        _run_background_loop(
+            "CleanupImages",
+            24 * 60 * 60,
+            detection_service.cleanup_orphaned_images,
+            action_message="cleanup: removed orphaned images"
+        )
+    )
+    app.state.startup_cleanup_images_task = cleanup_images_task
+
     yield
 
-    for task in (resync_task, verification_resume_task, clean_auth_task, camera_status_task):
+    for task in (resync_task, verification_resume_task, clean_auth_task, camera_status_task, cleanup_images_task):
         if not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -16,7 +16,7 @@ from app.models.whitelist import Whitelist
 from app.models.camera import Camera, CameraDirection, CameraVerificationStatus
 from app.models.car import Car
 from app.models.group import Group
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.schemas.car import (
     CameraSummary,
     CarDetailRead,
@@ -37,10 +37,8 @@ from app.schemas.car import (
 from app.schemas.common import PaginatedResponse
 from app.services import (
     audit_service,
-    camera_service,
     camera_verification_service,
     channel_service,
-    mediamtx_service,
     storage_service,
     notification_service,
     blacklist_service
@@ -51,6 +49,10 @@ from app.core.error_messages import Common, DetectionErrors, CameraErrors
 from app.core.scope_utils import build_scope_filters
 from app.core.scope_utils import build_scope_filters
 from app.core.db_utils import escape_like
+import os
+import time
+from fastapi.concurrency import run_in_threadpool
+from app.core.config import get_settings
 
 
 _MAX_ROUTE_TRACKING_RANGE_DAYS = 360
@@ -385,15 +387,18 @@ async def create_detection(
         event_data = event_payload.model_dump(mode="json")
         logger.warning(f"[SSE DEBUG] Publishing detection_created for car {car.id}, is_blacklist={is_blacklist}, is_whitelist={is_whitelist}, village={camera.village_id}")
         await channel_service.alerts.publish(camera.village_id, "detection_created", event_data)
+        global_payload = _build_global_detection_event_payload(request, camera, car)
+        global_event_data = global_payload.model_dump(mode="json")
+        await channel_service.alerts.publish_global("detection_created", global_event_data)
+
         if is_blacklist:
             logger.warning(f"[SSE DEBUG] Publishing blacklist_alert for car {car.id}")
             await channel_service.alerts.publish(camera.village_id, "blacklist_alert", event_data)
+            await channel_service.alerts.publish_global("blacklist_alert", global_event_data)
         if is_whitelist:
             logger.warning(f"[SSE DEBUG] Publishing whitelist_alert for car {car.id}")
             await channel_service.alerts.publish(camera.village_id, "whitelist_alert", event_data)
-
-        global_payload = _build_global_detection_event_payload(request, camera, car)
-        await channel_service.alerts.publish_global("detection_created", global_payload.model_dump(mode="json"))
+            await channel_service.alerts.publish_global("whitelist_alert", global_event_data)
     except Exception:
         logger.exception(
             "Failed to publish SSE event for detection_id=%s event_id=%s",
@@ -759,11 +764,6 @@ async def get_route_tracking(
         page=page,
         page_size=page_size,
     )
-
-import os
-import time
-from fastapi.concurrency import run_in_threadpool
-from app.core.config import get_settings
 
 async def cleanup_orphaned_images(db: AsyncSession) -> int:
     settings = get_settings()
