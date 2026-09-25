@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     camera_status_task = asyncio.create_task(
         _run_background_loop(
             "CameraStatus", 
-            180, 
+            60, 
             camera_service.check_and_update_camera_statuses,
             action_message="status sync: updated"
         )
