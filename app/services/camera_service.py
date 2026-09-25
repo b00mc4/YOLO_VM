@@ -27,10 +27,12 @@ from app.schemas.common import PaginatedResponse
 from app.services import ai_vision_service, audit_service, camera_verification_service, mediamtx_service, notification_service, channel_service, channel_service
 from app.services.ai_vision_service import VerificationCheckResult
 from app.core.error_messages import CameraErrors, Common, VillageErrors
+from app.core.url_utils import check_rtsp_stream
+from app.services import channel_service
+
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
-
 
 
 async def _push_stream_config(camera_id: uuid.UUID, stream_ai: str, delay: int = 1) -> tuple[bool, list[str]]:
@@ -842,9 +844,6 @@ async def push_cameras_online(village_id: uuid.UUID, camera_ids: list[uuid.UUID]
             await notify_sync_failure(village_id, camera.id, camera.name, list(dict.fromkeys(failed_services)))
 
 async def check_and_update_camera_statuses(db: AsyncSession) -> int:
-    from app.core.url_utils import check_rtsp_stream
-    from app.services import channel_service
-    
     result = await db.execute(select(Camera).where(Camera.is_active == True))
     cameras = result.scalars().all()
     if not cameras:
@@ -866,9 +865,21 @@ async def check_and_update_camera_statuses(db: AsyncSession) -> int:
             updates_made += 1
             
             # Real-time update to dashboard
-            payload = {"camera_id": str(camera.id), "is_online": is_online}
+            payload = {"camera_id": str(camera.id), "camera_name": camera.name, "is_online": is_online}
             await channel_service.alerts.publish(camera.village_id, "camera_status_changed", payload)
             await channel_service.alerts.publish_global("camera_status_changed", {**payload, "village_id": str(camera.village_id)})
+
+            if not is_online:
+                detail = f"กล้อง '{camera.name}' ขาดการเชื่อมต่อ"
+                await notification_service.notify_village(
+                    db, 
+                    camera.village_id, 
+                    "camera_offline", 
+                    detail, 
+                    payload
+                )
+                await channel_service.alerts.publish(camera.village_id, "camera_offline", payload)
+                await channel_service.alerts.publish_global("camera_offline", {**payload, "village_id": str(camera.village_id)})
 
     if updates_made > 0:
         await db.commit()

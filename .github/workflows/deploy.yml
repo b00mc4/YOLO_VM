@@ -18,6 +18,9 @@ jobs:
           # ดึงโค้ดล่าสุดจาก GitHub
           git pull origin main
           
-          # อัปเดตและรีสตาร์ทเฉพาะส่วนที่เปลี่ยนแปลง (มาตรฐานสากล)
+          # อัปเดตและรีสตาร์ทเฉพาะส่วนที่เปลี่ยนแปลง (Zero-Downtime)
           docker compose up -d --build --remove-orphans
+          
+          # รีเฟรช Nginx ให้จำ IP ใหม่ของ Container ที่ถูก Rebuild
+          docker compose restart nginx
 
