@@ -306,10 +306,6 @@ async def get_camera_status(db: AsyncSession, current_user: User, camera_id: uui
     else:
         status = False
 
-    if camera.is_online != stream_is_healthy:
-        camera.is_online = stream_is_healthy
-        await db.commit()
-
     return CameraStatusRead(
         id=camera.id,
         is_active=camera.is_active,
