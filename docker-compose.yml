@@ -45,6 +45,12 @@ services:
     image: bluenviron/mediamtx:latest
     container_name: village_guard_mediamtx
     restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MTX_AUTHINTERNALUSERS_0_USER: ${MEDIAMTX_USER}
+      MTX_AUTHINTERNALUSERS_0_PASS: ${MEDIAMTX_PASS}
+      MTX_AUTHINTERNALUSERS_0_PERMISSIONS_0_ACTION: api
     ports:
       - "8554:8554"
       - "8888:8888"

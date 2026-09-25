@@ -25,12 +25,7 @@ authMethod: http
 
 authHTTPAddress: http://api:8000/api/mediamtx/webhook
 
-authInternalUsers:
-  - user: superadmin
-    pass: boom3108_
-    ips: []
-    permissions:
-      - action: api
+authInternalUsers: []
 
 authHTTPExclude:
   - action: api

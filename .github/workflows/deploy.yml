@@ -18,7 +18,6 @@ jobs:
           # ดึงโค้ดล่าสุดจาก GitHub
           git pull origin main
           
-          # รีสตาร์ท Docker (ปิดของเก่า สร้างของใหม่)
-          docker compose down
-          docker compose up -d --build
+          # อัปเดตและรีสตาร์ทเฉพาะส่วนที่เปลี่ยนแปลง (มาตรฐานสากล)
+          docker compose up -d --build --remove-orphans
 
