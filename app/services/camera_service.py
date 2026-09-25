@@ -880,6 +880,17 @@ async def check_and_update_camera_statuses(db: AsyncSession) -> int:
                 )
                 await channel_service.alerts.publish(camera.village_id, "camera_offline", payload)
                 await channel_service.alerts.publish_global("camera_offline", {**payload, "village_id": str(camera.village_id)})
+            else:
+                detail = f"กล้อง '{camera.name}' กลับมาเชื่อมต่อได้ปกติ"
+                await notification_service.notify_village(
+                    db, 
+                    camera.village_id, 
+                    "camera_online", 
+                    detail, 
+                    payload
+                )
+                await channel_service.alerts.publish(camera.village_id, "camera_online", payload)
+                await channel_service.alerts.publish_global("camera_online", {**payload, "village_id": str(camera.village_id)})
 
     if updates_made > 0:
         await db.commit()
