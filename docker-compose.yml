@@ -6,6 +6,8 @@ services:
     image: postgres:15
     container_name: village_guard_db
     restart: unless-stopped
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

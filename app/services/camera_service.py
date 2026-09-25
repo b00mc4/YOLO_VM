@@ -862,6 +862,13 @@ async def check_and_update_camera_statuses(db: AsyncSession) -> int:
                     detail, 
                     payload
                 )
+                await audit_service.log_action(
+                    db,
+                    request=None,
+                    action="camera_offline",
+                    detail=detail,
+                    village_id=camera.village_id,
+                )
                 await channel_service.alerts.publish(camera.village_id, "camera_offline", payload)
                 await channel_service.alerts.publish_global("camera_offline", {**payload, "village_id": str(camera.village_id)})
             else:
@@ -872,6 +879,13 @@ async def check_and_update_camera_statuses(db: AsyncSession) -> int:
                     "camera_online", 
                     detail, 
                     payload
+                )
+                await audit_service.log_action(
+                    db,
+                    request=None,
+                    action="camera_online",
+                    detail=detail,
+                    village_id=camera.village_id,
                 )
                 await channel_service.alerts.publish(camera.village_id, "camera_online", payload)
                 await channel_service.alerts.publish_global("camera_online", {**payload, "village_id": str(camera.village_id)})
