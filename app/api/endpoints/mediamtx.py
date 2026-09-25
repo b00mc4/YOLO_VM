@@ -2,12 +2,10 @@ from __future__ import annotations
 import uuid
 import logging
 import jwt
-from typing import Any
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import time
-
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.user import User
@@ -18,7 +16,6 @@ router = APIRouter(prefix="/mediamtx", tags=["mediamtx"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# Cache valid tokens to prevent DB spam (Auth Storm) from HLS chunks
 _AUTH_CACHE: dict[str, float] = {}
 _CACHE_TTL = 10.0
 
@@ -37,11 +34,9 @@ async def mediamtx_auth_webhook(request: Request, db: AsyncSession = Depends(get
     path = payload.get("path")  # camera_id
     query = payload.get("query", "")
 
-    # We only restrict "read" for now. For publish, you might want separate logic.
     if action != "read":
         return {"status": "ok"}
 
-    # Extract jwt from query e.g., "jwt=eyJ..."
     token = None
     if query:
         for param in query.split("&"):
