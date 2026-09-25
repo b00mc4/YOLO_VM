@@ -9,6 +9,7 @@ apiAddress: :9997
 
 hls: yes
 hlsAddress: :8888
+hlsTrustedProxies: [172.16.0.0/12, 192.168.0.0/16, 10.0.0.0/8]
 
 hlsSegmentCount: 3
 hlsSegmentDuration: 1s
