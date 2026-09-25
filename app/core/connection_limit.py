@@ -15,9 +15,7 @@ class InMemoryConnectionLimiter:
     def register(self, user_id: uuid.UUID, limit: int) -> None:
         current = self._counts.get(user_id, 0)
         if current >= limit:
-            pass
-            # We no longer raise ConnectionLimitExceeded here because we handle eviction at the SSE multiplexer level.
-            # raise ConnectionLimitExceeded(limit)
+            raise ConnectionLimitExceeded(max_connections=limit)
         self._counts[user_id] = current + 1
 
     def unregister(self, user_id: uuid.UUID) -> None:

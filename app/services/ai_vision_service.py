@@ -38,15 +38,23 @@ async def push_camera_config(camera_id: uuid.UUID, stream_ai: str, delay: int = 
     url = f"{settings.ai_vision_api_url.rstrip('/')}/partner/cameras"
 
     try:
+        payload = {
+            "camera_id": str(camera_id),
+            "camera_url": stream_ai,
+            "webhook_url": derive_webhook_url(),
+            "delay": delay,
+        }
+        headers = {"X-API-Key": settings.ai_vision_api_key}
+        
+        logger.info("--- DEBUG POST /api/camera TO AI VISION ---")
+        logger.info(f"URL: {url}")
+        logger.info(f"Payload: {payload}")
+        logger.info(f"Headers: {headers}")
+
         response = await get_client().post(
             url,
-            json={
-                "camera_id": str(camera_id),
-                "camera_url": stream_ai,
-                "webhook_url": derive_webhook_url(),
-                "delay": delay,
-            },
-            headers={"X-API-Key": settings.ai_vision_api_key},
+            json=payload,
+            headers=headers,
         )
     except httpx.HTTPError as exc:
         logger.warning("ai vision push_camera_config request failed for %s: %s", camera_id, exc)
