@@ -2,21 +2,19 @@ rtsp: yes
 rtspTransports: [tcp]
 readTimeout: 30s
 writeQueueSize: 8192
-readBufferCount: 1024
 
 api: yes
 apiAddress: :9997
 
 hls: yes
 hlsAddress: :8888
-hlsTrustedProxies: [172.16.0.0/12, 192.168.0.0/16, 10.0.0.0/8]
 
-hlsSegmentCount: 3
+hlsSegmentCount: 7
 hlsSegmentDuration: 1s
 hlsVariant: lowLatency
 hlsPartDuration: 100ms
 hlsAlwaysRemux: yes
-hlsAllowOrigin: '*'
+hlsAllowOrigin: ['*']
 
 rtmp: no
 webrtc: no
