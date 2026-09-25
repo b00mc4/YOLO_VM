@@ -14,7 +14,7 @@ hlsSegmentDuration: 1s
 hlsVariant: lowLatency
 hlsPartDuration: 100ms
 hlsAlwaysRemux: yes
-hlsAllowOrigin: ['*']
+hlsAllowOrigins: ['*']
 
 rtmp: no
 webrtc: no
