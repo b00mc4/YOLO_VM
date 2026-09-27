@@ -53,8 +53,7 @@ async def mediamtx_auth_webhook(request: Request, db: AsyncSession = Depends(get
     if cache_key in _AUTH_CACHE:
         if now - _AUTH_CACHE[cache_key] < _CACHE_TTL:
             return {"status": "ok"}
-        else:
-            del _AUTH_CACHE[cache_key]
+        del _AUTH_CACHE[cache_key]
 
     try:
         # Decode the ES256 token that we issued in mediamtx_auth_service

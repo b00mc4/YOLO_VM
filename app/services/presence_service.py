@@ -48,7 +48,6 @@ class _PresenceTicketData:
     view_village_id: uuid.UUID | None
     expire_at: datetime
     password_changed_at: datetime
-    password_changed_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

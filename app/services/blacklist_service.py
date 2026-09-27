@@ -14,8 +14,8 @@ from app.models.whitelist import Whitelist
 from app.models.user import User, UserRole
 from app.schemas.blacklist import BlacklistCreate, BlacklistRead, BlacklistUpdate
 from app.schemas.common import PaginatedResponse
-from app.services import audit_service, village_service, email_service
-from app.core.error_messages import BlacklistErrors, Common, Auth, Auth
+from app.services import audit_service, email_service
+from app.core.error_messages import BlacklistErrors
 
 
 from app.core.config import get_settings

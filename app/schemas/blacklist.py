@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.regex_patterns import _THAI_PLATE_PATTERN
 
 
 from app.core.plate_format import PlateString, ProvinceString

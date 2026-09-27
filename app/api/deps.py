@@ -12,7 +12,7 @@ from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User, UserRole
 from app.models.group import Group
-from app.core.rate_limit import RateLimitExceeded, get_rate_limiter
+from app.core.rate_limit import get_rate_limiter
 from app.core.error_messages import Auth, Common
 from app.core.session_manager import session_manager
 from app.services import audit_service

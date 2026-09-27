@@ -1,7 +1,6 @@
 from __future__ import annotations
 import uuid
 from datetime import date, datetime
-from fastapi import Form
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.core.timezone import BANGKOK_TZ
 from app.models.camera import CameraDirection

@@ -8,7 +8,7 @@ from fastapi import Request
 from sqlalchemy import select
 from app.db.session import async_session_maker
 from app.models.camera import Camera, CameraVerificationStatus
-from app.services import ai_vision_service, audit_service, notification_service,mediamtx_service
+from app.services import ai_vision_service, audit_service, notification_service
 from app.services.ai_vision_service import VerificationCheckResult
 
 from app.core.config import get_settings

@@ -3,12 +3,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import BackgroundTasks, HTTPException, Request, UploadFile, status
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import verify_village_scope
 from app.core.account_lockout import get_account_locker
-from app.core.security import hash_password, hash_token, verify_password
-from app.models.audit_log import AuditLog
+from app.core.security import hash_password, hash_token
 from app.models.contact import Contact
 from app.models.refresh_token import RefreshToken
 from app.models.user import User, UserRole
@@ -32,7 +31,7 @@ from app.services import audit_service, auth_service, email_service, storage_ser
 from app.models.group import Group
 from app.core.error_messages import Auth, AvatarErrors, Common, UserErrors
 from app.core.db_utils import escape_like
-from app.core.rate_limit import get_rate_limiter, password_reauth_key, PASSWORD_REAUTH_LIMIT, PASSWORD_REAUTH_WINDOW_SECONDS
+from app.core.rate_limit import get_rate_limiter
 
 _RESEND_INVITE_COOLDOWN = timedelta(minutes=1)
 _EMAIL_CHANGE_COOLDOWN = timedelta(minutes=1)

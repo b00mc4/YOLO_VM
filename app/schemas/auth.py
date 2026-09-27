@@ -1,10 +1,8 @@
 from __future__ import annotations
 import uuid
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
-from app.core.security import validate_password_policy
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from app.schemas.user import UserRead
-from app.core.error_messages import ValidationErrors
 
 class TokenResponse(BaseModel):
     access_token: str

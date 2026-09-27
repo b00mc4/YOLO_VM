@@ -6,11 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import verify_village_scope
 from app.models.blacklist import Blacklist
 from app.models.whitelist import Whitelist
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.schemas.common import PaginatedResponse
 from app.schemas.whitelist import WhitelistCreate, WhitelistRead, WhitelistUpdate
-from app.services import audit_service, village_service
-from app.core.error_messages import Common, WhitelistErrors, Auth, Auth
+from app.services import audit_service
+from app.core.error_messages import WhitelistErrors
 
 
 from app.core.scope_utils import resolve_village_id, build_scope_filters

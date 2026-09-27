@@ -87,7 +87,7 @@ async def check_rtsp_stream(url: str, timeout: float = 2.0) -> bool:
         if "404" in resp_str:
             return False
             
-        if resp_str.startswith("RTSP/1.0 200") or resp_str.startswith("RTSP/1.0 401"):
+        if resp_str.startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
             return True
             
         return False

@@ -7,7 +7,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.deps import get_current_user, verify_api_key, get_current_user_from_query
+from app.api.deps import get_current_user, get_current_user_from_query
 from app.db.session import get_db
 from app.models.camera import CameraDirection
 from app.models.user import User

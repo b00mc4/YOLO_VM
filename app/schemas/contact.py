@@ -1,6 +1,5 @@
 from __future__ import annotations
 import uuid
-import re
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.models.contact import ContactType

@@ -1,10 +1,9 @@
 from __future__ import annotations
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.notification import Notification
 from app.models.user import User, UserRole

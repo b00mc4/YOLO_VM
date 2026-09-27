@@ -2,14 +2,13 @@ from __future__ import annotations
 import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.deps import require_roles, get_current_user
+from app.api.deps import require_roles
 from app.db.session import get_db
 from app.models.camera import CameraDirection
 from app.models.user import User, UserRole
 from app.schemas.camera import (
     CameraCreate,
     CameraRead,
-    CameraResyncAllRead,
     CameraStatusRead,
     CameraStreamTokenRead,
     CameraUpdate,

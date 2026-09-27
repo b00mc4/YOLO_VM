@@ -156,7 +156,7 @@ async def check_camera_verification(camera_id: uuid.UUID) -> VerificationCheckRe
 
     if body.get("verification_status") == "verified":
         return VerificationCheckResult.VERIFIED
-    elif body.get("verification_status") == "failed":
+    if body.get("verification_status") == "failed":
         return VerificationCheckResult.FAILED
 
     return VerificationCheckResult.PENDING

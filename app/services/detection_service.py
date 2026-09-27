@@ -1,10 +1,8 @@
 from __future__ import annotations
-import asyncio
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 from typing import Literal
 from fastapi import BackgroundTasks, HTTPException, Request, UploadFile, status
 from sqlalchemy import case, func, select, tuple_
@@ -45,7 +43,7 @@ from app.services import (
 )
 import logging
 from app.core.timezone import BANGKOK_TZ
-from app.core.error_messages import Common, DetectionErrors, CameraErrors
+from app.core.error_messages import DetectionErrors, CameraErrors
 from app.core.scope_utils import build_scope_filters
 from app.core.scope_utils import build_scope_filters
 from app.core.db_utils import escape_like

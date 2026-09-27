@@ -1,6 +1,6 @@
 from __future__ import annotations
 import uuid
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status   
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Request, UploadFile, status   
 from fastapi.responses import FileResponse                                                          
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_roles, rate_limit_by_ip
