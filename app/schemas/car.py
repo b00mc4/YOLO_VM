@@ -9,6 +9,25 @@ _CAPTURE_TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 
 
 from app.core.plate_format import NormalizedString
+from dataclasses import dataclass
+from typing import Literal, Optional
+
+@dataclass
+class DetectionFilter:
+    village_id: Optional[uuid.UUID] = None
+    village_name: Optional[str] = None
+    camera_id: Optional[uuid.UUID] = None
+    license_plate: Optional[str] = None
+    province: Optional[str] = None
+    color: Optional[str] = None
+    time_detect_from: Optional[datetime] = None
+    time_detect_to: Optional[datetime] = None
+    is_blacklist: Optional[bool] = None
+    is_whitelist: Optional[bool] = None
+    direction: Optional[CameraDirection] = None
+    order: Literal["asc", "desc"] = "desc"
+    page: int = 1
+    page_size: int = 20
 
 class DetectionCreate(BaseModel):
     event_id: uuid.UUID
@@ -35,10 +54,10 @@ class CarRead(BaseModel):
 
     id: uuid.UUID
     event_id: uuid.UUID
-    camera_id: uuid.UUID | None
-    camera_name: str | None
-    village_id: uuid.UUID | None = None
-    village_name: str | None = None
+    camera_id: Optional[uuid.UUID]
+    camera_name: Optional[str]
+    village_id: Optional[uuid.UUID] = None
+    village_name: Optional[str] = None
     license_plate: str
     province: str
     color: str
@@ -47,15 +66,15 @@ class CarRead(BaseModel):
     time_detect: datetime
     is_blacklist: bool
     is_whitelist: bool
-    direction: CameraDirection | None
+    direction: Optional[CameraDirection]
     created_at: datetime
 
 
 class CameraSummary(BaseModel):
-    id: uuid.UUID | None
+    id: Optional[uuid.UUID]
     name: str
-    village_id: uuid.UUID | None = None
-    village_name: str | None = None
+    village_id: Optional[uuid.UUID] = None
+    village_name: Optional[str] = None
     is_camera_deleted: bool
 
 
@@ -71,7 +90,7 @@ class CarDetailRead(BaseModel):
     time_detect: datetime
     is_blacklist: bool
     is_whitelist: bool
-    direction: CameraDirection | None
+    direction: Optional[CameraDirection]
     created_at: datetime
     camera: CameraSummary
 
@@ -110,7 +129,7 @@ class DetectionEventPayload(BaseModel):
     time_detect: datetime
     is_blacklist: bool
     is_whitelist: bool
-    direction: CameraDirection | None
+    direction: Optional[CameraDirection]
     camera: DetectionEventCamera
     image_crop: str
     image_full: str
@@ -129,14 +148,14 @@ class DetectionCreateAck(BaseModel):
 
 class RouteTrackingDetectionEntry(BaseModel):
     detection_id: uuid.UUID
-    camera_id: uuid.UUID | None
-    camera_name: str | None = None
-    village_id: uuid.UUID | None
-    village_name: str | None = None
+    camera_id: Optional[uuid.UUID]
+    camera_name: Optional[str] = None
+    village_id: Optional[uuid.UUID]
+    village_name: Optional[str] = None
     lat: float | None = None
     long: float | None = None
     is_camera_deleted: bool
-    direction: CameraDirection | None
+    direction: Optional[CameraDirection]
     time_detect: datetime
     color: str
     is_blacklist: bool

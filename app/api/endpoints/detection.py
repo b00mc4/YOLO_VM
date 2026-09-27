@@ -18,6 +18,7 @@ from app.schemas.car import (
     DetectionCreateAck,
     DetectionDashboardRead,
     RouteTrackingRead,
+    DetectionFilter,
 )
 from app.schemas.common import PaginatedResponse
 from app.services import detection_service
@@ -138,20 +139,7 @@ async def create_detection(
 @router.get("", response_model=PaginatedResponse[CarRead])
 async def list_detections(
     request: Request,
-    village_id: uuid.UUID | None = Query(default=None),
-    village_name: str | None = Query(default=None),
-    camera_id: uuid.UUID | None = Query(default=None),
-    license_plate: str | None = Query(default=None),
-    province: str | None = Query(default=None),
-    color: str | None = Query(default=None),
-    time_detect_from: datetime | None = Query(default=None),
-    time_detect_to: datetime | None = Query(default=None),
-    is_blacklist: bool | None = Query(default=None),
-    is_whitelist: bool | None = Query(default=None),
-    direction: CameraDirection | None = Query(default=None),
-    order: Literal["asc", "desc"] = Query(default="desc"),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    filters: DetectionFilter = Depends(),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -159,20 +147,7 @@ async def list_detections(
         db=db,
         request=request,
         current_user=current_user,
-        village_id=village_id,
-        village_name=village_name,
-        camera_id=camera_id,
-        license_plate=license_plate,
-        province=province,
-        color=color,
-        time_detect_from=time_detect_from,
-        time_detect_to=time_detect_to,
-        is_blacklist=is_blacklist,
-        is_whitelist=is_whitelist,
-        direction=direction,
-        order=order,
-        page=page,
-        page_size=page_size,
+        filters=filters,
     )
 
 @router.get("/dashboard/today", response_model=DetectionDashboardRead)

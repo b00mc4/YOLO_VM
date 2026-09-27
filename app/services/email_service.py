@@ -172,8 +172,8 @@ async def send_bulk_plain_email(
     finally:
         try:
             await smtp.quit()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to quit smtp connection: %s", exc)
 
     _email_health.mark_recovered()
     return failed_recipients

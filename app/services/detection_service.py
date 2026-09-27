@@ -27,6 +27,7 @@ from app.schemas.car import (
     DetectionEventPayloadGlobal,
     RepeatedPlateEntry,
     DetectionCreateAck,
+    DetectionFilter,
     RouteTrackingCarGroup,
     RouteTrackingDayEntry,
     RouteTrackingDetectionEntry,
@@ -233,6 +234,61 @@ def _build_global_detection_event_payload(
     )
 
 
+
+async def _process_and_store_images(
+    camera: Camera, car_id: uuid.UUID, image_crop: UploadFile, image_full: UploadFile
+) -> tuple[str, str]:
+    crop_content, crop_extension = await storage_service.read_and_validate_image(image_crop)
+    full_content, full_extension = await storage_service.read_and_validate_image(image_full)
+
+    crop_path = storage_service.build_detection_image_path(
+        village_id=camera.village_id,
+        camera_id=camera.id,
+        image_id=car_id,
+        suffix="crop",
+        extension=crop_extension,
+    )
+    full_path = storage_service.build_detection_image_path(
+        village_id=camera.village_id,
+        camera_id=camera.id,
+        image_id=car_id,
+        suffix="full",
+        extension=full_extension,
+    )
+    written_paths = []
+    try:
+        await storage_service.write_image(crop_path, crop_content)
+        written_paths.append(crop_path)
+        await storage_service.write_image(full_path, full_content)
+        written_paths.append(full_path)
+    except OSError:
+        await _cleanup_written_images(written_paths)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=DetectionErrors.STORE_IMAGE_FAILED,
+        ) from None
+    return crop_path, full_path
+
+async def _trigger_detection_alerts(db, request, camera, payload, is_blacklist, is_whitelist):
+    if is_blacklist:
+        await audit_service.log_action(
+            db,
+            request,
+            action="blacklist_detection",
+            detail=f"blacklisted plate detected: {payload.license_plate} ({payload.province})",
+            village_id=camera.village_id,
+        )
+        await notification_service.notify_village(
+            db, camera.village_id, "blacklist_alert",
+            f"blacklisted plate detected: {payload.license_plate} ({payload.province})",
+        )
+
+    if is_whitelist:
+        await notification_service.notify_village(
+            db, camera.village_id, "whitelist_alert",
+            f"whitelisted plate detected: {payload.license_plate} ({payload.province})",
+        )
+
 async def create_detection(
     db: AsyncSession,
     request: Request,
@@ -241,15 +297,6 @@ async def create_detection(
     image_crop: UploadFile,
     image_full: UploadFile,
 ) -> tuple[DetectionCreateAck, bool]:
-    """
-    สร้าง detection ใหม่จาก webhook ของ AI vision
-
-    Idempotent ตาม event_id: ถ้า event_id นี้เคยถูกบันทึกไปแล้ว (ไม่ว่าจะจากการ
-    ประมวลผลสำเร็จรอบก่อน หรือจาก request คู่แข่งที่ insert ไปพร้อมกัน) จะไม่สร้าง
-    record ใหม่ ไม่เขียนรูปซ้ำ ไม่ publish SSE ซ้ำ แต่ return ack ของ record เดิมกลับไป
-    โดยตัวที่สองของ tuple ที่ return คือ is_new (True = สร้างจริง, False = replay)
-    ผู้เรียกใช้ค่านี้เพื่อเลือกตอบ 201 หรือ 200 กลับไปยัง AI vision
-    """
     existing = await _find_existing_car_by_event_id(db, payload.event_id)
     if existing is not None:
         logger.info(
@@ -270,39 +317,9 @@ async def create_detection(
 
     car_id = uuid.uuid4()
 
-    crop_content, crop_extension = await storage_service.read_and_validate_image(image_crop)
-    full_content, full_extension = await storage_service.read_and_validate_image(image_full)
-
-    crop_path = storage_service.build_detection_image_path(
-        village_id=camera.village_id,
-        camera_id=camera.id,
-        image_id=car_id,
-        suffix="crop",
-        extension=crop_extension,
-    )
-    full_path = storage_service.build_detection_image_path(
-        village_id=camera.village_id,
-        camera_id=camera.id,
-        image_id=car_id,
-        suffix="full",
-        extension=full_extension,
-    )
-
+    crop_path, full_path = await _process_and_store_images(camera, car_id, image_crop, image_full)
     is_blacklist = await _check_is_blacklisted(db, camera.village_id, payload.license_plate, payload.province)
     is_whitelist = await _check_is_whitelisted(db, camera.village_id, payload.license_plate, payload.province)
-
-    written_paths: list[str] = []
-    try:
-        await storage_service.write_image(crop_path, crop_content)
-        written_paths.append(crop_path)
-        await storage_service.write_image(full_path, full_content)
-        written_paths.append(full_path)
-    except OSError:
-        await _cleanup_written_images(written_paths)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=DetectionErrors.STORE_IMAGE_FAILED,
-        ) from None
 
     car = Car(
         id=car_id,
@@ -325,36 +342,17 @@ async def create_detection(
     )
     db.add(car)
 
-    if is_blacklist:
-        await audit_service.log_action(
-            db,
-            request,
-            action="blacklist_detection",
-            detail=f"blacklisted plate detected: {payload.license_plate} ({payload.province})",
-            village_id=camera.village_id,
-        )
-        await notification_service.notify_village(
-            db, camera.village_id, "blacklist_alert",
-            f"blacklisted plate detected: {payload.license_plate} ({payload.province})",
-        )
-
-    if is_whitelist:
-        await notification_service.notify_village(
-            db, camera.village_id, "whitelist_alert",
-            f"whitelisted plate detected: {payload.license_plate} ({payload.province})",
-        )
+    await _trigger_detection_alerts(db, request, camera, payload, is_blacklist, is_whitelist)
 
     try:
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
+        await _cleanup_written_images([crop_path, full_path])
 
         sqlstate = getattr(exc.orig, "sqlstate", None)
         if sqlstate != "23505":
-            await _cleanup_written_images(written_paths)
             raise
-
-        await _cleanup_written_images(written_paths)
 
         existing = await _find_existing_car_by_event_id(db, payload.event_id)
         logger.info(
@@ -364,7 +362,7 @@ async def create_detection(
         return DetectionCreateAck(event_id=existing.event_id if existing else payload.event_id), False
     except Exception:
         await db.rollback()
-        await _cleanup_written_images(written_paths)
+        await _cleanup_written_images([crop_path, full_path])
         raise
 
     await db.refresh(car)
@@ -410,55 +408,42 @@ async def list_detections(
     db: AsyncSession,
     request: Request,
     current_user: User,
-    village_id: uuid.UUID | None,
-    village_name: str | None,
-    camera_id: uuid.UUID | None,
-    license_plate: str | None,
-    province: str | None,
-    color: str | None,
-    time_detect_from: datetime | None,
-    time_detect_to: datetime | None,
-    is_blacklist: bool | None,
-    is_whitelist: bool | None,
-    direction: CameraDirection | None,
-    order: Literal["asc", "desc"],
-    page: int,
-    page_size: int,
+    filters: DetectionFilter,
 ) -> PaginatedResponse[CarRead]:
-    scope_filters = build_scope_filters(current_user, village_id, Car)
+    scope_filters = build_scope_filters(current_user, filters.village_id, Car)
     stmt = select(Car).where(*scope_filters)
 
-    if village_name is not None:
-        stmt = stmt.where(Car.village_name.ilike(f"%{escape_like(village_name)}%", escape="\\"))
-    if camera_id is not None:
-        stmt = stmt.where(Car.camera_id == camera_id)
-    if license_plate is not None:
-        stmt = stmt.where(Car.license_plate.ilike(f"%{escape_like(license_plate)}%", escape="\\"))
-    if province is not None:
-        stmt = stmt.where(Car.province == province)
-    if color is not None:
-        stmt = stmt.where(Car.color.ilike(f"%{escape_like(color)}%", escape="\\"))
-    if time_detect_from is not None:
-        stmt = stmt.where(Car.time_detect >= time_detect_from)
-    if time_detect_to is not None:
-        stmt = stmt.where(Car.time_detect <= time_detect_to)
-    if is_blacklist is not None:
-        stmt = stmt.where(Car.is_blacklist == is_blacklist)
-    if is_whitelist is not None:
-        stmt = stmt.where(Car.is_whitelist == is_whitelist)
-    if direction is not None:
-        stmt = stmt.where(Car.direction == direction)
+    if filters.village_name is not None:
+        stmt = stmt.where(Car.village_name.ilike(f"%{escape_like(filters.village_name)}%", escape="\\"))
+    if filters.camera_id is not None:
+        stmt = stmt.where(Car.camera_id == filters.camera_id)
+    if filters.license_plate is not None:
+        stmt = stmt.where(Car.license_plate.ilike(f"%{escape_like(filters.license_plate)}%", escape="\\"))
+    if filters.province is not None:
+        stmt = stmt.where(Car.province == filters.province)
+    if filters.color is not None:
+        stmt = stmt.where(Car.color.ilike(f"%{escape_like(filters.color)}%", escape="\\"))
+    if filters.time_detect_from is not None:
+        stmt = stmt.where(Car.time_detect >= filters.time_detect_from)
+    if filters.time_detect_to is not None:
+        stmt = stmt.where(Car.time_detect <= filters.time_detect_to)
+    if filters.is_blacklist is not None:
+        stmt = stmt.where(Car.is_blacklist == filters.is_blacklist)
+    if filters.is_whitelist is not None:
+        stmt = stmt.where(Car.is_whitelist == filters.is_whitelist)
+    if filters.direction is not None:
+        stmt = stmt.where(Car.direction == filters.direction)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     count_result = await db.execute(count_stmt)
     total = count_result.scalar_one()
 
-    if order == "asc":
+    if filters.order == "asc":
         stmt = stmt.order_by(Car.time_detect.asc())
     else:
         stmt = stmt.order_by(Car.time_detect.desc())
 
-    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+    stmt = stmt.offset((filters.page - 1) * filters.page_size).limit(filters.page_size)
     result = await db.execute(stmt)
     items = result.scalars().all()
 
@@ -471,8 +456,8 @@ async def list_detections(
     return PaginatedResponse[CarRead](
         items=[_to_car_read(item, request, village_names.get(item.village_id)) for item in items],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=filters.page,
+        page_size=filters.page_size,
     )
 
 
