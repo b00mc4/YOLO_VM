@@ -64,7 +64,7 @@ def _detect_image_extension(content: bytes) -> str:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=StorageErrors.INVALID_IMAGE,
-        )
+        ) from None
  
     extension = _ALLOWED_PILLOW_FORMATS.get(detected_format)
     if extension is None:

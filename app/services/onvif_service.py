@@ -112,7 +112,7 @@ async def probe_camera(host: str, port: int, username: str, password: str) -> di
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=OnvifErrors.CONNECTION_FAILED,
-        )
+        ) from None
     except Fault as exc:
         message = str(exc).lower()
         if "not authorized" in message or "auth" in message:
@@ -120,21 +120,21 @@ async def probe_camera(host: str, port: int, username: str, password: str) -> di
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=OnvifErrors.INVALID_CREDENTIALS,
-            )
+            ) from exc
         logger.warning("onvif probe SOAP fault for host=%s port=%s: %s", host, port, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=OnvifErrors.UNSUPPORTED_OR_UNREACHABLE,
-        )
+        ) from exc
     except TransportError as exc:
         logger.warning("onvif probe transport error for host=%s port=%s: %s", host, port, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=OnvifErrors.CONNECTION_FAILED,
-        )
+        ) from exc
     except Exception as exc:
         logger.warning("onvif probe unexpected error for host=%s port=%s: %s", host, port, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=OnvifErrors.UNSUPPORTED_OR_UNREACHABLE,
-        )
+        ) from exc

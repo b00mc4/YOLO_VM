@@ -302,7 +302,7 @@ async def create_detection(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=DetectionErrors.STORE_IMAGE_FAILED,
-        )
+        ) from None
 
     car = Car(
         id=car_id,
@@ -787,7 +787,8 @@ async def cleanup_orphaned_images(db: AsyncSession) -> int:
                         
                     file_path = Path(root) / filename
                     # ลบเฉพาะรูปขยะที่ค้างมาเกิน 1 ชั่วโมง เพื่อไม่ให้กระทบรูปที่กำลังอัปโหลดอยู่
-                    if now - file_path.stat().st_mtime > 3600:
+                    _STALE_FILE_AGE_SECONDS = 3600
+                    if now - file_path.stat().st_mtime > _STALE_FILE_AGE_SECONDS:
                         candidates.setdefault(car_id, []).append(file_path)
         return candidates
 
@@ -822,4 +823,5 @@ async def cleanup_orphaned_images(db: AsyncSession) -> int:
         deleted_count = await run_in_threadpool(_delete_files, orphaned_ids)
         
     return deleted_count
+
 

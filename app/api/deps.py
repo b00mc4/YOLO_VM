@@ -41,7 +41,7 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=Auth.COULD_NOT_VALIDATE_CREDENTIALS,
             headers=_UNAUTHORIZED_HEADERS,
-        )
+        ) from None
 
     if not jti or not session_manager.is_valid_session(user_id, jti):
         raise HTTPException(

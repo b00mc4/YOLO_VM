@@ -31,7 +31,7 @@ def _validate_coordinate(v: Any, max_len: int, min_val: float, max_val: float) -
     try:
         val = float(v_str)
     except ValueError:
-        raise ValueError("รูปแบบพิกัดไม่ถูกต้อง")
+        raise ValueError("รูปแบบพิกัดไม่ถูกต้อง") from None
         
     if not (min_val <= val <= max_val):
         raise ValueError(f"ค่าต้องอยู่ระหว่าง {min_val} ถึง {max_val}")

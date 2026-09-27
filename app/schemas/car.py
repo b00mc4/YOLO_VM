@@ -25,7 +25,7 @@ class DetectionCreate(BaseModel):
             try:
                 parsed = datetime.strptime(v, _CAPTURE_TIME_FORMAT)
             except ValueError:
-                raise ValueError(f"capture_time must be in format YYYY/MM/DD HH:MM:SS, got: {v!r}")
+                raise ValueError(f"capture_time must be in format YYYY/MM/DD HH:MM:SS, got: {v!r}") from None
             return parsed.replace(tzinfo=BANGKOK_TZ)
         return v
 

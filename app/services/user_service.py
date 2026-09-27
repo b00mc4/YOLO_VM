@@ -340,8 +340,8 @@ async def get_user_detail(db: AsyncSession, request: Request, current_user: User
         verify_village_scope(current_user, user.village_id)
     except HTTPException as e:
         if e.status_code in (status.HTTP_404_NOT_FOUND, status.HTTP_403_FORBIDDEN):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=UserErrors.NOT_FOUND)
-        raise e
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=UserErrors.NOT_FOUND) from e
+        raise
     return await _to_user_detail(db, request, user)
 
 
@@ -357,8 +357,8 @@ async def set_user_active_status(
         _verify_user_write_scope(current_user, target)
     except HTTPException as e:
         if e.status_code in (status.HTTP_404_NOT_FOUND, status.HTTP_403_FORBIDDEN):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=UserErrors.NOT_FOUND)
-        raise e
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=UserErrors.NOT_FOUND) from e
+        raise
 
     if target.id == current_user.id:
         raise HTTPException(
@@ -659,7 +659,7 @@ async def request_email_change(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"กรุณารออีก {minutes_left} นาที ก่อนขอเปลี่ยนอีเมลได้อีกครั้ง"
-        )
+        ) from e
         
     try:
         rate_limiter.check(f"change_email_daily:{user_id}", 3, 86400)
@@ -667,7 +667,7 @@ async def request_email_change(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="คุณขอเปลี่ยนอีเมลเกิน 3 ครั้งแล้ว กรุณาลองใหม่ในวันพรุ่งนี้"
-        )
+        ) from None
 
     if payload.new_email == target.email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=UserErrors.EMAIL_SAME_AS_CURRENT)
@@ -736,7 +736,7 @@ async def upload_user_avatar(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=AvatarErrors.STORE_FAILED,
-        )
+        ) from None
 
     old_path = target.avatar_path
     is_replace = old_path is not None

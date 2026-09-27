@@ -4,6 +4,7 @@ import logging
 import time
 import uuid
 import httpx
+from fastapi import status
 from app.core.config import get_settings
 from app.services import mediamtx_auth_service
 from app.core.alert_cooldown import InMemorySingleWorkerCooldown
@@ -74,7 +75,7 @@ async def upsert_path(camera_id: uuid.UUID, source_rtsp_url: str) -> bool:
         logger.error("MediaMTX upsert_path request failed for %s: %s", camera_id, exc)
         return False
 
-    if response.status_code == 404:
+    if response.status_code == status.HTTP_404_NOT_FOUND:
         add_url = f"{settings.mediamtx_api_url.rstrip('/')}/v3/config/paths/add/{path_name}"
         try:
             response = await get_client().post(
@@ -91,7 +92,7 @@ async def upsert_path(camera_id: uuid.UUID, source_rtsp_url: str) -> bool:
             logger.error("MediaMTX upsert_path (add fallback) request failed for %s: %s", camera_id, exc)
             return False
 
-    if response.status_code == 404:
+    if response.status_code == status.HTTP_404_NOT_FOUND:
         add_url = f"{settings.mediamtx_api_url.rstrip('/')}/v3/config/paths/add/{path_name}"
         try:
             response = await get_client().post(
@@ -108,7 +109,7 @@ async def upsert_path(camera_id: uuid.UUID, source_rtsp_url: str) -> bool:
             logger.error("MediaMTX upsert_path (add fallback) request failed for %s: %s", camera_id, exc)
             return False
 
-    if response.status_code >= 400:
+    if response.status_code >= status.HTTP_400_BAD_REQUEST:
         logger.error(
             "MediaMTX upsert_path rejected for %s: status=%s body=%s",
             camera_id, response.status_code, response.text,
@@ -128,7 +129,7 @@ async def remove_path(camera_id: uuid.UUID) -> bool:
         logger.error("MediaMTX remove_path request failed for %s: %s", camera_id, exc)
         return False
 
-    if response.status_code >= 400 and response.status_code != 404:
+    if response.status_code >= status.HTTP_400_BAD_REQUEST and response.status_code != status.HTTP_404_NOT_FOUND:
         logger.error(
             "MediaMTX remove_path unexpected status for %s: status=%s body=%s",
             camera_id, response.status_code, response.text,
@@ -148,10 +149,10 @@ async def _get_path_info(camera_id: uuid.UUID) -> dict | None:
         logger.warning("MediaMTX get_path_info request failed for %s: %s", camera_id, exc)
         return None
 
-    if response.status_code == 404:
+    if response.status_code == status.HTTP_404_NOT_FOUND:
         return {"exists": False}
 
-    if response.status_code >= 400:
+    if response.status_code >= status.HTTP_400_BAD_REQUEST:
         logger.warning(
             "MediaMTX get_path_info unexpected status for %s: status=%s body=%s",
             camera_id, response.status_code, response.text,
@@ -192,7 +193,8 @@ async def check_source_alive(camera_id: uuid.UUID) -> tuple[bool, bool]:
             return entry["data"]
 
     # Clear stale cache occasionally
-    if len(_ALIVE_CACHE) > 1000:
+    _MAX_CACHE_SIZE = 1000
+    if len(_ALIVE_CACHE) > _MAX_CACHE_SIZE:
         stale = [k for k, v in _ALIVE_CACHE.items() if now - v["time"] > _ALIVE_CACHE_TTL]
         for k in stale:
             _ALIVE_CACHE.pop(k, None)
@@ -212,3 +214,4 @@ async def check_source_alive(camera_id: uuid.UUID) -> tuple[bool, bool]:
 
     _ALIVE_CACHE[cid_str] = {"time": time.time(), "data": result}
     return result
+

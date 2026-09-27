@@ -107,7 +107,7 @@ async def _handle_real_detection(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=_format_validation_error(exc),
-        )
+        ) from exc
 
     ack, is_new = await detection_service.create_detection(db, request, background_tasks, payload, image_crop, image_full)
     status_code = status.HTTP_201_CREATED if is_new else status.HTTP_200_OK

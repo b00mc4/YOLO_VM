@@ -149,8 +149,8 @@ async def multiplex_stream(
             if presence_conn_id: await presence_service.unregister_connection(presence_conn_id)
             
         if isinstance(exc, ConnectionLimitExceeded):
-            raise _connection_limit_exceeded_response(exc)
-        raise exc
+            raise _connection_limit_exceeded_response(exc) from exc
+        raise
 
     if not (alerts_active or security_active or presence_active):
         raise HTTPException(status_code=400, detail="At least one ticket must be provided")

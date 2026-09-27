@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import uuid
 import httpx
+from fastapi import status
 from app.core.config import get_settings
 import enum
 
@@ -60,7 +61,7 @@ async def push_camera_config(camera_id: uuid.UUID, stream_ai: str, delay: int = 
         logger.warning("ai vision push_camera_config request failed for %s: %s", camera_id, exc)
         return False
 
-    if response.status_code >= 400:
+    if response.status_code >= status.HTTP_400_BAD_REQUEST:
         logger.warning(
             "ai vision push_camera_config rejected for %s: status=%s body=%s",
             camera_id, response.status_code, response.text,
@@ -91,7 +92,7 @@ async def update_camera_config(camera_id: uuid.UUID, stream_ai: str, delay: int 
         logger.warning("ai vision update_camera_config request failed for %s: %s", camera_id, exc)
         return False
 
-    if response.status_code >= 400:
+    if response.status_code >= status.HTTP_400_BAD_REQUEST:
         logger.warning(
             "ai vision update_camera_config rejected for %s: status=%s body=%s",
             camera_id, response.status_code, response.text,
@@ -119,7 +120,7 @@ async def set_camera_active_status(camera_id: uuid.UUID, is_active: bool) -> boo
         logger.warning("ai vision set_camera_active_status request failed for %s: %s", camera_id, exc)
         return False
 
-    if response.status_code >= 400:
+    if response.status_code >= status.HTTP_400_BAD_REQUEST:
         logger.warning(
             "ai vision set_camera_active_status rejected for %s: status=%s body=%s",
             camera_id, response.status_code, response.text,
@@ -138,10 +139,10 @@ async def check_camera_verification(camera_id: uuid.UUID) -> VerificationCheckRe
         logger.warning("ai vision check_camera_verification request failed for %s: %s", camera_id, exc)
         return VerificationCheckResult.UNREACHABLE
 
-    if response.status_code == 404:
+    if response.status_code == status.HTTP_404_NOT_FOUND:
         return VerificationCheckResult.NOT_FOUND
 
-    if response.status_code >= 400:
+    if response.status_code >= status.HTTP_400_BAD_REQUEST:
         logger.warning(
             "ai vision check_camera_verification unexpected status for %s: status=%s body=%s",
             camera_id, response.status_code, response.text,
@@ -180,10 +181,10 @@ async def delete_camera(camera_id: uuid.UUID) -> CameraDeleteResult:
     if response.status_code in (200, 204):
         return CameraDeleteResult.DELETED
 
-    if response.status_code == 404:
+    if response.status_code == status.HTTP_404_NOT_FOUND:
         return CameraDeleteResult.NOT_FOUND
 
-    if response.status_code == 429:
+    if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
         return CameraDeleteResult.RATE_LIMITED
 
     logger.warning(

@@ -153,7 +153,7 @@ async def forgot_password(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"กรุณารออีก {minutes_left} นาที ก่อนขอรหัสผ่านใหม่ได้อีกครั้ง"
-        )
+        ) from e
         
     try:
         rate_limiter.check(f"forgot_daily:{normalized_email}", 3, 86400)
@@ -161,7 +161,7 @@ async def forgot_password(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="คุณขอรหัสผ่านใหม่เกิน 3 ครั้งแล้ว กรุณาลองใหม่ในวันพรุ่งนี้"
-        )
+        ) from None
 
     await auth_service.request_password_reset(db, background_tasks, normalized_email)
 

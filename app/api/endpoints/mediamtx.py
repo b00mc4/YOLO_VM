@@ -28,7 +28,7 @@ async def mediamtx_auth_webhook(request: Request, db: AsyncSession = Depends(get
     try:
         payload = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from None
 
     action = payload.get("action")
     path = payload.get("path")  # camera_id
@@ -71,10 +71,10 @@ async def mediamtx_auth_webhook(request: Request, db: AsyncSession = Depends(get
         
     except jwt.ExpiredSignatureError:
         logger.info(f"MediaMTX Webhook: Token expired for path {path}")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired") from None
     except Exception as e:
         logger.warning(f"MediaMTX Webhook: Invalid token for path {path}: {e}")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from e
 
     if user_id == uuid.UUID(int=0):
         # SYSTEM trigger
@@ -97,7 +97,7 @@ async def mediamtx_auth_webhook(request: Request, db: AsyncSession = Depends(get
     try:
         verify_village_scope(user, camera.village_id)
     except HTTPException:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User lost access to this camera")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User lost access to this camera") from None
 
     # Cleanup stale cache to prevent memory leak
     if len(_AUTH_CACHE) > 5000:
