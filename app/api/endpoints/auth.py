@@ -54,7 +54,7 @@ def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me:
         cookie_kwargs["max_age"] = settings.refresh_token_expire_days * 24 * 60 * 60
 
     response.set_cookie(
-        key=auth_service.REFRESH_TOKEN_COOKIE_NAME,
+        key="refresh_token",
         value=raw_refresh_token,
         httponly=True,
         secure=settings.cookie_secure,
@@ -66,7 +66,7 @@ def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me:
 
 def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
-        key=auth_service.REFRESH_TOKEN_COOKIE_NAME,
+        key="refresh_token",
         domain=settings.cookie_domain,
         path=settings.auth_refresh_cookie_path,
         secure=settings.cookie_secure,
@@ -105,7 +105,7 @@ async def refresh(
     db: AsyncSession = Depends(get_db),
 ):
     """แลก Refresh TOken โดยใช้ Cookie"""
-    raw_refresh_token = request.cookies.get(auth_service.REFRESH_TOKEN_COOKIE_NAME)
+    raw_refresh_token = request.cookies.get("refresh_token")
     if raw_refresh_token is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Auth.MISSING_REFRESH_TOKEN)
 
@@ -125,7 +125,7 @@ async def logout(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    raw_refresh_token = request.cookies.get(auth_service.REFRESH_TOKEN_COOKIE_NAME)
+    raw_refresh_token = request.cookies.get("refresh_token")
     if raw_refresh_token is not None:
         await auth_service.revoke_refresh_token(db, raw_refresh_token)
     _clear_refresh_cookie(response)

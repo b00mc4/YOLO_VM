@@ -35,8 +35,6 @@ _RAPID_LOGIN_WINDOW_SECONDS = 60
 
 settings = get_settings()
 
-REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
-
 _GENERIC_LOGIN_ERROR = Auth.INVALID_CREDENTIALS
 
 _LOGIN_USERNAME_LIMIT = 50
@@ -483,7 +481,7 @@ async def get_active_sessions(db: AsyncSession, request: Request, current_user: 
     tokens = result.scalars().all()
     
     # 2. Filter with session_manager to get only TRULY active sessions (max 5)
-    current_raw_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
+    current_raw_token = request.cookies.get("refresh_token")
     current_token_hash = hash_token(current_raw_token) if current_raw_token else None
 
     active_sessions = []
@@ -543,7 +541,7 @@ async def get_active_sessions(db: AsyncSession, request: Request, current_user: 
     tokens = result.scalars().all()
     
     # 2. Filter with session_manager to get only TRULY active sessions (max 5)
-    current_raw_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
+    current_raw_token = request.cookies.get("refresh_token")
     current_token_hash = hash_token(current_raw_token) if current_raw_token else None
 
     active_sessions = []
