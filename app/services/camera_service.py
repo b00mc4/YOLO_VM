@@ -2,7 +2,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
 from fastapi import BackgroundTasks, HTTPException, Request, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -338,8 +337,7 @@ async def get_camera_stream_token(
             detail=CameraErrors.STREAM_UNAVAILABLE_INACTIVE,
         )
 
-    stream_url = mediamtx_service.derive_stream_url(camera_id, current_user.id)
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    stream_url, expires_at = mediamtx_service.derive_stream_url(camera_id, current_user.id)
 
     return CameraStreamTokenRead(
         camera_id=camera_id,

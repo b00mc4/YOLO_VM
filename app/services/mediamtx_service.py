@@ -3,6 +3,7 @@ import asyncio
 import logging
 import time
 import uuid
+from datetime import datetime
 import httpx
 from fastapi import status
 from app.core.config import get_settings
@@ -51,9 +52,9 @@ def _path_name(camera_id: uuid.UUID) -> str:
     return str(camera_id)
 
 
-def derive_stream_url(camera_id: uuid.UUID, user_id: uuid.UUID) -> str:
-    token = mediamtx_auth_service.issue_stream_token(camera_id, user_id)
-    return f"/mediamtx/{camera_id}/index.m3u8?jwt={token}"
+def derive_stream_url(camera_id: uuid.UUID, user_id: uuid.UUID) -> tuple[str, datetime]:
+    token, expires_at = mediamtx_auth_service.issue_stream_token_with_expiry(camera_id, user_id)
+    return f"/mediamtx/{camera_id}/index.m3u8?jwt={token}", expires_at
 
 
 async def upsert_path(camera_id: uuid.UUID, source_rtsp_url: str) -> bool:

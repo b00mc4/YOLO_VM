@@ -27,15 +27,24 @@ def _load_private_key() -> EllipticCurvePrivateKey:
     return _PRIVATE_KEY
 
 
-def issue_stream_token(camera_id: uuid.UUID, user_id: uuid.UUID) -> str:
+def issue_stream_token_with_expiry(
+    camera_id: uuid.UUID, user_id: uuid.UUID
+) -> tuple[str, datetime]:
     now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=settings.mediamtx_stream_token_expire_seconds)
     payload = {
         "iat": now,
         "nbf": now,
-        "exp": now + timedelta(minutes=15),
+        "exp": expires_at,
         "user_id": str(user_id),
         _MEDIAMTX_PERMISSIONS_CLAIM: [
             {"action": _READ_ACTION, "path": str(camera_id)},
         ],
     }
-    return jwt.encode(payload, _load_private_key(), algorithm=_JWT_ALGORITHM)
+    token = jwt.encode(payload, _load_private_key(), algorithm=_JWT_ALGORITHM)
+    return token, expires_at
+
+
+def issue_stream_token(camera_id: uuid.UUID, user_id: uuid.UUID) -> str:
+    token, _ = issue_stream_token_with_expiry(camera_id, user_id)
+    return token
