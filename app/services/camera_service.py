@@ -840,6 +840,8 @@ async def check_and_update_camera_statuses(db: AsyncSession) -> int:
             mtx_alive, _ = await mediamtx_service.check_source_alive(camera.id)
             if mtx_alive:
                 return camera, True
+            if not camera.is_online:
+                return camera, False
             is_online = await check_rtsp_stream(camera.stream_ai)
             return camera, is_online
 
