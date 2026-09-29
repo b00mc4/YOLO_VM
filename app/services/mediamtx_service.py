@@ -192,7 +192,6 @@ async def check_source_alive(camera_id: uuid.UUID) -> tuple[bool, bool]:
         if now - entry["time"] < _ALIVE_CACHE_TTL:
             return entry["data"]
 
-    # Clear stale cache occasionally
     _MAX_CACHE_SIZE = 1000
     if len(_ALIVE_CACHE) > _MAX_CACHE_SIZE:
         stale = [k for k, v in _ALIVE_CACHE.items() if now - v["time"] > _ALIVE_CACHE_TTL]

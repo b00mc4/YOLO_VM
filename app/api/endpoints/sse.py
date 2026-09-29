@@ -106,94 +106,88 @@ async def multiplex_stream(
     security_ticket: str | None = Query(None),
     presence_ticket: str | None = Query(None),
 ):
-    user_id, village_id, password_changed_at = None, None, None
-    
-    alerts_active, alerts_q, alerts_uid, alerts_vid = False, None, None, None
-    security_active, security_q, security_uid, security_vid = False, None, None, None
-    presence_active, presence_q, presence_ticket_data, presence_conn_id = False, None, None, None
-    initial_snapshot = None
+    resolved_alerts, resolved_security, resolved_presence = None, None, None
 
-    try:
-        if alerts_ticket:
-            alerts_uid, alerts_vid, p_at = channel_service.alerts.resolve_ticket(alerts_ticket)
-            user_id, village_id, password_changed_at = alerts_uid, alerts_vid, p_at
-            channel_service.alerts.register_connection(alerts_uid)
-            alerts_active = True
-            alerts_q = channel_service.alerts.subscribe(alerts_vid)
+    if alerts_ticket:
+        resolved_alerts = channel_service.alerts.resolve_ticket(alerts_ticket)
+    if security_ticket:
+        resolved_security = channel_service.security_alerts.resolve_ticket(security_ticket)
+    if presence_ticket:
+        resolved_presence = presence_service.resolve_presence_ticket(presence_ticket)
 
-        if security_ticket:
-            security_uid, security_vid, p_at = channel_service.security_alerts.resolve_ticket(security_ticket)
-            if not user_id: user_id, village_id, password_changed_at = security_uid, security_vid, p_at
-            channel_service.security_alerts.register_connection(security_uid)
-            security_active = True
-            security_q = channel_service.security_alerts.subscribe(security_vid)
-
-        if presence_ticket:
-            presence_ticket_data = presence_service.resolve_presence_ticket(presence_ticket)
-            if not user_id: 
-                user_id, village_id, password_changed_at = presence_ticket_data.user_id, presence_ticket_data.village_id, presence_ticket_data.password_changed_at
-            presence_conn_id = await presence_service.register_connection(presence_ticket_data)
-            presence_active = True
-            presence_q = presence_service.register_watcher(presence_ticket_data)
-            initial_snapshot = await presence_service.build_snapshot_for_ticket(presence_ticket_data)
-
-    except Exception as exc:
-        if alerts_active:
-            if alerts_q: channel_service.alerts.unsubscribe(alerts_vid, alerts_q)
-            channel_service.alerts.unregister_connection(alerts_uid)
-        if security_active:
-            if security_q: channel_service.security_alerts.unsubscribe(security_vid, security_q)
-            channel_service.security_alerts.unregister_connection(security_uid)
-        if presence_active:
-            if presence_q: presence_service.unregister_watcher(presence_ticket_data, presence_q)
-            if presence_conn_id: await presence_service.unregister_connection(presence_conn_id)
-            
-        if isinstance(exc, ConnectionLimitExceeded):
-            raise _connection_limit_exceeded_response(exc) from exc
-        raise
-
-    if not (alerts_active or security_active or presence_active):
+    if not (resolved_alerts or resolved_security or resolved_presence):
         raise HTTPException(status_code=400, detail="At least one ticket must be provided")
 
-    master_queue = asyncio.Queue(maxsize=settings.channel_queue_size)
-    
-    if user_id:
-        user_streams = _active_streams[user_id]
-        user_streams.append(master_queue)
-        limit = settings.channel_max_connections_per_user
-        while len(user_streams) > limit:
-            oldest_q = user_streams.popleft()
-            while True:
-                try:
-                    oldest_q.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-            oldest_q.put_nowait({"event": "force_close", "data": "Too many connections"})
-            oldest_q.put_nowait(CLOSE_SENTINEL)
-
-    async def forwarder(q: asyncio.Queue):
-        try:
-            while True:
-                item = await q.get()
-                if item is CLOSE_SENTINEL:
-                    await master_queue.put(CLOSE_SENTINEL)
-                    break
-                await master_queue.put(item)
-        except asyncio.CancelledError:
-            pass
-
-    tasks = []
-    if alerts_q: tasks.append(asyncio.create_task(forwarder(alerts_q)))
-    if security_q: tasks.append(asyncio.create_task(forwarder(security_q)))
-    if presence_q: tasks.append(asyncio.create_task(forwarder(presence_q)))
+    user_id, village_id, password_changed_at = None, None, None
+    if resolved_alerts:
+        user_id, village_id, password_changed_at = resolved_alerts
+    elif resolved_security:
+        user_id, village_id, password_changed_at = resolved_security
+    elif resolved_presence:
+        user_id = resolved_presence.user_id
+        village_id = resolved_presence.village_id
+        password_changed_at = resolved_presence.password_changed_at
 
     async def event_generator():
+        alerts_active, alerts_q, alerts_uid, alerts_vid = False, None, None, None
+        security_active, security_q, security_uid, security_vid = False, None, None, None
+        presence_active, presence_q, presence_ticket_data, presence_conn_id = False, None, None, None
+        initial_snapshot = None
+        master_queue = asyncio.Queue(maxsize=settings.channel_queue_size)
+        tasks: list[asyncio.Task] = []
+
         try:
-            print(f"[SSE] Starting event generator for user {user_id}")
+            if resolved_alerts:
+                alerts_uid, alerts_vid, _ = resolved_alerts
+                channel_service.alerts.register_connection(alerts_uid)
+                alerts_active = True
+                alerts_q = channel_service.alerts.subscribe(alerts_vid)
+
+            if resolved_security:
+                security_uid, security_vid, _ = resolved_security
+                channel_service.security_alerts.register_connection(security_uid)
+                security_active = True
+                security_q = channel_service.security_alerts.subscribe(security_vid)
+
+            if resolved_presence:
+                presence_ticket_data = resolved_presence
+                presence_conn_id = await presence_service.register_connection(presence_ticket_data)
+                presence_active = True
+                presence_q = presence_service.register_watcher(presence_ticket_data)
+                initial_snapshot = await presence_service.build_snapshot_for_ticket(presence_ticket_data)
+
+            if user_id:
+                user_streams = _active_streams[user_id]
+                user_streams.append(master_queue)
+                limit = settings.channel_max_connections_per_user
+                while len(user_streams) > limit:
+                    oldest_q = user_streams.popleft()
+                    while True:
+                        try:
+                            oldest_q.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                    oldest_q.put_nowait({"event": "force_close", "data": "Too many connections"})
+                    oldest_q.put_nowait(CLOSE_SENTINEL)
+
+            async def forwarder(q: asyncio.Queue):
+                try:
+                    while True:
+                        item = await q.get()
+                        if item is CLOSE_SENTINEL:
+                            await master_queue.put(CLOSE_SENTINEL)
+                            break
+                        await master_queue.put(item)
+                except asyncio.CancelledError:
+                    pass
+
+            if alerts_q: tasks.append(asyncio.create_task(forwarder(alerts_q)))
+            if security_q: tasks.append(asyncio.create_task(forwarder(security_q)))
+            if presence_q: tasks.append(asyncio.create_task(forwarder(presence_q)))
+
             yield {"event": "padding", "data": " " * 4096}
 
             if initial_snapshot is not None:
-                print(f"[SSE] Yielding initial snapshot for user {user_id}")
                 yield {
                     "event": "presence_update",
                     "data": json.dumps(initial_snapshot, default=str),
@@ -203,20 +197,20 @@ async def multiplex_stream(
             while True:
                 if _revalidation_due(last_revalidated_at):
                     if not await session_validation_service.is_session_still_valid(user_id, village_id, password_changed_at):
-                        print(f"[SSE] Session invalid for user {user_id}")
                         break
                     last_revalidated_at = monotonic()
 
                 try:
                     event = await asyncio.wait_for(master_queue.get(), timeout=_PING_INTERVAL_SECONDS)
                     if event is CLOSE_SENTINEL:
-                        print(f"[SSE] CLOSE_SENTINEL received for user {user_id}")
                         break
-                    print(f"[SSE] Yielding {event['event']} for user {user_id}")
                     yield {"event": event["event"], "data": json.dumps(event["data"], default=str)}
                 except asyncio.TimeoutError:
-                    print(f"[SSE] Yielding ping for user {user_id}")
                     yield {"event": "ping", "data": ""}
+
+        except ConnectionLimitExceeded as exc:
+            yield {"event": "error", "data": json.dumps({"detail": RealtimeErrors.too_many_connections(exc.max_connections)})}
+
         finally:
             if user_id:
                 user_streams = _active_streams.get(user_id)
@@ -234,8 +228,8 @@ async def multiplex_stream(
                 channel_service.security_alerts.unsubscribe(security_vid, security_q)
                 channel_service.security_alerts.unregister_connection(security_uid)
             if presence_active:
-                presence_service.unregister_watcher(presence_ticket_data, presence_q)
-                await presence_service.unregister_connection(presence_conn_id)
+                if presence_q: presence_service.unregister_watcher(presence_ticket_data, presence_q)
+                if presence_conn_id: await presence_service.unregister_connection(presence_conn_id)
 
     return EventSourceResponse(
         event_generator(),
