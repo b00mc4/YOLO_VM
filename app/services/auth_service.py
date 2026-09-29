@@ -22,7 +22,7 @@ from app.models.user import User, UserRole
 from app.core.rate_limit import get_rate_limiter, password_reauth_key, PASSWORD_REAUTH_LIMIT, PASSWORD_REAUTH_WINDOW_SECONDS
 from app.core.account_lockout import AccountLocked, get_account_locker
 from app.core.error_messages import Auth, UserErrors
-
+from app.core.session_manager import session_manager
 import asyncio
 from app.core.rate_limit import InMemorySingleWorkerRateLimiter, RateLimitExceeded
 from app.core.alert_cooldown import InMemorySingleWorkerCooldown
@@ -34,8 +34,6 @@ _RAPID_LOGIN_LIMIT = 5
 _RAPID_LOGIN_WINDOW_SECONDS = 60
 
 settings = get_settings()
-
-_GENERIC_LOGIN_ERROR = Auth.INVALID_CREDENTIALS
 
 _LOGIN_USERNAME_LIMIT = 50
 _LOGIN_USERNAME_WINDOW_SECONDS = 30 * 60
@@ -137,7 +135,7 @@ async def authenticate_user(db: AsyncSession, request: Request, username: str, p
                 logging.getLogger(__name__).error(f"Failed to publish bruteforce alert: {e}")
             raise AccountLocked(retry_after_seconds=locked_for_seconds)
 
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_GENERIC_LOGIN_ERROR)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Auth.INVALID_CREDENTIALS)
 
     get_account_locker().reset(locker_key)
     await audit_service.log_action(
@@ -162,9 +160,6 @@ async def authenticate_user(db: AsyncSession, request: Request, username: str, p
             )
 
     return user
-
-
-from app.core.session_manager import session_manager
 
 async def issue_tokens(db: AsyncSession, user: User, remember_me: bool):
     raw_refresh_token = generate_secure_token()

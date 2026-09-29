@@ -11,7 +11,6 @@ def _validate_thai_plate(v: str) -> str:
         raise ValueError("ป้ายทะเบียนต้องเป็นอักขระภาษาไทย อังกฤษ หรือตัวเลขเท่านั้น")
     return v
 
-# Reusable Types for Pydantic V2
 PlateString = Annotated[str, BeforeValidator(_normalize_string), AfterValidator(_validate_thai_plate)]
 ProvinceString = Annotated[str, BeforeValidator(_normalize_string)]
 NormalizedString = Annotated[str, BeforeValidator(_normalize_string)]

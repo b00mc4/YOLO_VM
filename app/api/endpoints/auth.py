@@ -24,13 +24,11 @@ from app.api.deps import get_current_user, rate_limit_by_ip
 from app.core.error_messages import Auth
 from app.core.rate_limit import get_rate_limiter, RateLimitExceeded
 
-_VERIFY_SET_PASSWORD_TOKEN_IP_LIMIT = 20
-_VERIFY_SET_PASSWORD_TOKEN_IP_WINDOW_SECONDS = 10 * 60
-
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
-
+_VERIFY_SET_PASSWORD_TOKEN_IP_LIMIT = 20
+_VERIFY_SET_PASSWORD_TOKEN_IP_WINDOW_SECONDS = 10 * 60
 
 _LOGIN_IP_LIMIT = 10
 _LOGIN_IP_WINDOW_SECONDS = 60
