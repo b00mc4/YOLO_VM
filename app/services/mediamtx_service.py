@@ -9,7 +9,6 @@ from app.core.background import spawn_background
 from app.core.config import get_settings
 from app.services import mediamtx_auth_service
 from app.core.alert_cooldown import InMemorySingleWorkerCooldown
-from app.core.alert_cooldown import InMemorySingleWorkerCooldown
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -34,12 +33,6 @@ async def close() -> None:
 
 
 _SOURCE_ON_DEMAND_START_TIMEOUT_SECONDS = 15.0
-_COLD_START_POLL_INTERVAL_SECONDS = 1.0
-_COLD_START_POLL_BUFFER_SECONDS = 2.0
-_COLD_START_MAX_WAIT_SECONDS = _SOURCE_ON_DEMAND_START_TIMEOUT_SECONDS + _COLD_START_POLL_BUFFER_SECONDS
-_BYTES_CONFIRM_WINDOW_SECONDS = 2.0
-_TRIGGER_COOLDOWN_SECONDS = 30.0
-_trigger_cooldown = InMemorySingleWorkerCooldown()
 _TRIGGER_COOLDOWN_SECONDS = 30.0
 _trigger_cooldown = InMemorySingleWorkerCooldown()
 
@@ -52,6 +45,15 @@ def _path_name(camera_id: uuid.UUID) -> str:
     return str(camera_id)
 
 
+def _path_config(source_rtsp_url: str) -> dict:
+    return {
+        "source": source_rtsp_url,
+        "sourceOnDemand": False,
+        "sourceOnDemandStartTimeout": f"{int(_SOURCE_ON_DEMAND_START_TIMEOUT_SECONDS)}s",
+        "sourceProtocol": "tcp",
+    }
+
+
 def derive_stream_url(camera_id: uuid.UUID, user_id: uuid.UUID) -> tuple[str, datetime]:
     token, expires_at = mediamtx_auth_service.issue_stream_token_with_expiry(camera_id, user_id)
     return f"/mediamtx/{camera_id}/index.m3u8?jwt={token}", expires_at
@@ -59,56 +61,20 @@ def derive_stream_url(camera_id: uuid.UUID, user_id: uuid.UUID) -> tuple[str, da
 
 async def upsert_path(camera_id: uuid.UUID, source_rtsp_url: str) -> bool:
     path_name = _path_name(camera_id)
-    url = f"{settings.mediamtx_api_url.rstrip('/')}/v3/config/paths/replace/{path_name}"
+    base_url = settings.mediamtx_api_url.rstrip("/")
+    config = _path_config(source_rtsp_url)
 
     try:
         response = await get_client().post(
-            url,
-            json={
-                "source": source_rtsp_url,
-                "sourceOnDemand": False,
-                "sourceOnDemandStartTimeout": f"{int(_SOURCE_ON_DEMAND_START_TIMEOUT_SECONDS)}s",
-                "sourceProtocol": "tcp",
-            },
-            auth=_auth(),
+            f"{base_url}/v3/config/paths/replace/{path_name}", json=config, auth=_auth()
         )
+        if response.status_code == status.HTTP_404_NOT_FOUND:
+            response = await get_client().post(
+                f"{base_url}/v3/config/paths/add/{path_name}", json=config, auth=_auth()
+            )
     except httpx.HTTPError as exc:
         logger.error("MediaMTX upsert_path request failed for %s: %s", camera_id, exc)
         return False
-
-    if response.status_code == status.HTTP_404_NOT_FOUND:
-        add_url = f"{settings.mediamtx_api_url.rstrip('/')}/v3/config/paths/add/{path_name}"
-        try:
-            response = await get_client().post(
-                add_url,
-                json={
-                    "source": source_rtsp_url,
-                    "sourceOnDemand": False,
-                    "sourceOnDemandStartTimeout": f"{int(_SOURCE_ON_DEMAND_START_TIMEOUT_SECONDS)}s",
-                    "sourceProtocol": "tcp",
-                },
-                auth=_auth(),
-            )
-        except httpx.HTTPError as exc:
-            logger.error("MediaMTX upsert_path (add fallback) request failed for %s: %s", camera_id, exc)
-            return False
-
-    if response.status_code == status.HTTP_404_NOT_FOUND:
-        add_url = f"{settings.mediamtx_api_url.rstrip('/')}/v3/config/paths/add/{path_name}"
-        try:
-            response = await get_client().post(
-                add_url,
-                json={
-                    "source": source_rtsp_url,
-                    "sourceOnDemand": False,
-                    "sourceOnDemandStartTimeout": f"{int(_SOURCE_ON_DEMAND_START_TIMEOUT_SECONDS)}s",
-                    "sourceProtocol": "tcp",
-                },
-                auth=_auth(),
-            )
-        except httpx.HTTPError as exc:
-            logger.error("MediaMTX upsert_path (add fallback) request failed for %s: %s", camera_id, exc)
-            return False
 
     if response.status_code >= status.HTTP_400_BAD_REQUEST:
         logger.error(
@@ -175,7 +141,7 @@ async def _trigger_on_demand_pull(camera_id: uuid.UUID) -> None:
     playlist_url = f"{internal_hls_base}/{camera_id}/index.m3u8?jwt={token}"
 
     try:
-        await _client.get(playlist_url, timeout=_TRIGGER_PULL_TIMEOUT_SECONDS)
+        await get_client().get(playlist_url, timeout=_TRIGGER_PULL_TIMEOUT_SECONDS)
     except httpx.HTTPError as exc:
         logger.warning("MediaMTX trigger pull failed for camera %s: %s", camera_id, exc)
 

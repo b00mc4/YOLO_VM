@@ -23,11 +23,10 @@ from app.schemas.camera import (
     CameraVerificationCheckRead,
 )
 from app.schemas.common import PaginatedResponse
-from app.services import ai_vision_service, audit_service, camera_verification_service, mediamtx_service, notification_service, channel_service, channel_service
+from app.services import ai_vision_service, audit_service, camera_verification_service, mediamtx_service, notification_service, channel_service
 from app.services.ai_vision_service import VerificationCheckResult
 from app.core.error_messages import CameraErrors, Common, VillageErrors
 from app.core.url_utils import check_rtsp_stream
-from app.services import channel_service
 
 
 settings = get_settings()
@@ -110,8 +109,6 @@ async def notify_sync_failure(
         )
         await notification_service.notify_village(db, village_id, "camera_sync_failed", detail)
         await db.commit()
-
-    from app.services import channel_service
 
     payload = {
         "camera_id": str(camera_id),
