@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.stream_registry import StreamHandle, stream_registry
+from app.core.session_manager import session_manager
+from app.core.stream_registry import StreamCloseCode, StreamHandle, stream_registry
 from app.models.group import Group
 from app.models.user import User
 
@@ -46,17 +47,21 @@ async def _fetch_user_states(db: AsyncSession, user_ids: Iterable[uuid.UUID]) ->
 
 
 def _is_stream_valid(handle: StreamHandle, state: _UserState | None) -> bool:
+    identity = handle.identity
     if state is None or not state.is_active:
         return False
 
-    if state.password_changed_at is not None and handle.password_changed_at is not None:
-        if _as_utc(state.password_changed_at) > _as_utc(handle.password_changed_at):
+    if not session_manager.is_valid_session(identity.user_id, identity.session_id):
+        return False
+
+    if state.password_changed_at is not None and identity.password_changed_at is not None:
+        if _as_utc(state.password_changed_at) > _as_utc(identity.password_changed_at):
             return False
 
-    if handle.village_id is None:
+    if identity.village_id is None:
         return True
 
-    if state.village_id != handle.village_id:
+    if state.village_id != identity.village_id:
         return False
 
     return bool(state.village_is_active)
@@ -67,6 +72,10 @@ async def revoke_invalid_streams(db: AsyncSession) -> int:
     if not handles:
         return 0
 
-    states = await _fetch_user_states(db, {handle.user_id for handle in handles})
-    invalid_ids = [handle.stream_id for handle in handles if not _is_stream_valid(handle, states.get(handle.user_id))]
-    return stream_registry.revoke(invalid_ids)
+    states = await _fetch_user_states(db, {handle.identity.user_id for handle in handles})
+    invalid_ids = [
+        handle.stream_id
+        for handle in handles
+        if not _is_stream_valid(handle, states.get(handle.identity.user_id))
+    ]
+    return stream_registry.revoke(invalid_ids, StreamCloseCode.SESSION_REVOKED)

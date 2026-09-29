@@ -2,15 +2,26 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import OrderedDict, defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 from fastapi import HTTPException, status
-from app.core.connection_limit import InMemoryConnectionLimiter
 from app.core.security import generate_secure_token, hash_token
 from app.models.user import UserRole
 from app.core.error_messages import RealtimeErrors
 
 CLOSE_SENTINEL = object()
+
+
+@dataclass(frozen=True, slots=True)
+class StreamIdentity:
+    user_id: uuid.UUID
+    session_id: uuid.UUID
+    village_id: uuid.UUID | None
+    password_changed_at: datetime | None
+
+    def belongs_to_same_session(self, other: StreamIdentity) -> bool:
+        return self.user_id == other.user_id and self.session_id == other.session_id
 
 
 def try_emit(queue: asyncio.Queue, item) -> bool:
@@ -45,17 +56,11 @@ class SSEChannel:
 
     CLOSE_SENTINEL = CLOSE_SENTINEL
 
-    def __init__(
-        self,
-        ticket_expire_seconds: int,
-        max_connections_per_user: int,
-    ) -> None:
+    def __init__(self, ticket_expire_seconds: int) -> None:
         self._ticket_expire_seconds = ticket_expire_seconds
-        self._max_connections_per_user = max_connections_per_user
-        self._limiter = InMemoryConnectionLimiter()
         self._subscribers: dict[uuid.UUID, set[asyncio.Queue]] = defaultdict(set)
         self._global_subscribers: set[asyncio.Queue] = set()
-        self._tickets: OrderedDict[str, tuple[uuid.UUID, uuid.UUID | None, datetime, datetime | None]] = OrderedDict()
+        self._tickets: OrderedDict[str, tuple[StreamIdentity, datetime]] = OrderedDict()
         self._last_sweep_at = monotonic()
 
     def _sweep_expired_tickets(self) -> None:
@@ -67,13 +72,13 @@ class SSEChannel:
         now_utc = datetime.now(timezone.utc)
         expired_keys = [
             token_hash
-            for token_hash, (_, _, expire_at, _) in self._tickets.items()
+            for token_hash, (_, expire_at) in self._tickets.items()
             if expire_at < now_utc
         ]
         for token_hash in expired_keys:
             self._tickets.pop(token_hash, None)
 
-    def issue_ticket(self, user_id: uuid.UUID, scope_village_id: uuid.UUID | None, password_changed_at: datetime) -> str:
+    def issue_ticket(self, identity: StreamIdentity) -> str:
         self._sweep_expired_tickets()
 
         if len(self._tickets) >= self._MAX_TRACKED_TICKETS:
@@ -81,25 +86,19 @@ class SSEChannel:
 
         raw_token = generate_secure_token()
         expire_at = datetime.now(timezone.utc) + timedelta(seconds=self._ticket_expire_seconds)
-        self._tickets[hash_token(raw_token)] = (user_id, scope_village_id, expire_at, password_changed_at)
+        self._tickets[hash_token(raw_token)] = (identity, expire_at)
         return raw_token
 
-    def resolve_ticket(self, raw_token: str) -> tuple[uuid.UUID, uuid.UUID | None, datetime]:
+    def resolve_ticket(self, raw_token: str) -> StreamIdentity:
         ticket = self._tickets.pop(hash_token(raw_token), None)
         if ticket is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=RealtimeErrors.INVALID_OR_EXPIRED_TICKET)
 
-        user_id, village_id, expire_at, password_changed_at = ticket
+        identity, expire_at = ticket
         if expire_at < datetime.now(timezone.utc):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=RealtimeErrors.INVALID_OR_EXPIRED_TICKET)
 
-        return user_id, village_id, password_changed_at
-
-    def register_connection(self, user_id: uuid.UUID) -> None:
-        self._limiter.register(user_id, self._max_connections_per_user)
-
-    def unregister_connection(self, user_id: uuid.UUID) -> None:
-        self._limiter.unregister(user_id)
+        return identity
 
     def subscribe(self, village_id: uuid.UUID | None, queue: asyncio.Queue) -> None:
         if village_id is None:
@@ -141,30 +140,24 @@ class SSEChannel:
             self._global_subscribers.discard(queue)
 
 class ChannelService:
-    def __init__(
-        self,
-        ticket_expire_seconds: int,
-        max_connections_per_user: int,
-    ) -> None:
-        self._channel = SSEChannel(
-            ticket_expire_seconds=ticket_expire_seconds,
-            max_connections_per_user=max_connections_per_user,
-        )
+    def __init__(self, ticket_expire_seconds: int) -> None:
+        self._channel = SSEChannel(ticket_expire_seconds=ticket_expire_seconds)
 
-    def issue_ticket(self, current_user) -> str:
+    def issue_ticket(self, current_user, session_id: uuid.UUID) -> str:
         scope_village_id = (
             None if current_user.role == UserRole.SUPERADMIN else current_user.village_id
         )
-        return self._channel.issue_ticket(current_user.id, scope_village_id, current_user.password_changed_at)
+        return self._channel.issue_ticket(
+            StreamIdentity(
+                user_id=current_user.id,
+                session_id=session_id,
+                village_id=scope_village_id,
+                password_changed_at=current_user.password_changed_at,
+            )
+        )
 
-    def resolve_ticket(self, raw_token: str) -> tuple[uuid.UUID, uuid.UUID | None, datetime]:
+    def resolve_ticket(self, raw_token: str) -> StreamIdentity:
         return self._channel.resolve_ticket(raw_token)
-
-    def register_connection(self, user_id: uuid.UUID) -> None:
-        self._channel.register_connection(user_id)
-
-    def unregister_connection(self, user_id: uuid.UUID) -> None:
-        self._channel.unregister_connection(user_id)
 
     def subscribe(self, village_id: uuid.UUID | None, queue: asyncio.Queue) -> None:
         self._channel.subscribe(village_id, queue)

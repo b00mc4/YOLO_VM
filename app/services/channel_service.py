@@ -4,12 +4,6 @@ from app.core.sse_channel import ChannelService
 
 settings = get_settings()
 
-alerts = ChannelService(
-    ticket_expire_seconds=settings.sse_ticket_expire_seconds,
-    max_connections_per_user=settings.channel_max_connections_per_user,
-)
+alerts = ChannelService(ticket_expire_seconds=settings.sse_ticket_expire_seconds)
 
-security_alerts = ChannelService(
-    ticket_expire_seconds=settings.sse_ticket_expire_seconds,
-    max_connections_per_user=settings.channel_max_connections_per_user,
-)
+security_alerts = ChannelService(ticket_expire_seconds=settings.sse_ticket_expire_seconds)

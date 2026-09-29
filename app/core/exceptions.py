@@ -8,7 +8,6 @@ from sqlalchemy.exc import IntegrityError
 from app.schemas.common import ErrorResponse
 from app.core.rate_limit import RateLimitExceeded
 from app.core.account_lockout import AccountLocked
-from app.core.connection_limit import ConnectionLimitExceeded
 from app.core.error_messages import Common
 
 logger = logging.getLogger(__name__)
@@ -80,18 +79,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-async def connection_limit_exceeded_handler(request: Request, exc: ConnectionLimitExceeded):
-    logger.warning("Connection limit exceeded on %s %s", request.method, request.url.path)
-    return JSONResponse(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        content=ErrorResponse(detail=str(exc)).model_dump(),
-    )
-
-
 def register_exception_handlers(app: FastAPI):
     app.add_exception_handler(IntegrityError, integrity_error_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
     app.add_exception_handler(AccountLocked, account_locked_handler)
-    app.add_exception_handler(ConnectionLimitExceeded, connection_limit_exceeded_handler)

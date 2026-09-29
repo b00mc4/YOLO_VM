@@ -10,9 +10,8 @@ from time import monotonic
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from app.core.config import get_settings
-from app.core.connection_limit import InMemoryConnectionLimiter
 from app.core.security import generate_secure_token, hash_token
-from app.core.sse_channel import try_emit
+from app.core.sse_channel import StreamIdentity, try_emit
 from app.db.session import async_session_maker
 from app.models.group import Group
 from app.models.user import User, UserRole
@@ -42,6 +41,7 @@ class PresenceViewScope(str, enum.Enum):
 @dataclass(frozen=True, slots=True)
 class _PresenceTicketData:
     user_id: uuid.UUID
+    session_id: uuid.UUID
     username: str
     fullname: str
     role: UserRole
@@ -50,6 +50,14 @@ class _PresenceTicketData:
     view_village_id: uuid.UUID | None
     expire_at: datetime
     password_changed_at: datetime
+
+    def to_stream_identity(self) -> StreamIdentity:
+        return StreamIdentity(
+            user_id=self.user_id,
+            session_id=self.session_id,
+            village_id=self.village_id,
+            password_changed_at=self.password_changed_at,
+        )
 
 
 PresenceTicketData = _PresenceTicketData
@@ -72,7 +80,6 @@ _presence_by_village: dict[uuid.UUID, dict[uuid.UUID, set[uuid.UUID]]] = default
     lambda: defaultdict(set)
 )
 _presence_superadmins: dict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
-_connection_limiter = InMemoryConnectionLimiter()
 
 _broadcast_subscribers_by_village: dict[uuid.UUID, set[asyncio.Queue]] = defaultdict(set)
 _broadcast_subscribers_all: set[asyncio.Queue] = set()
@@ -98,6 +105,7 @@ def _sweep_expired_tickets() -> None:
 
 def issue_presence_ticket(
     current_user: User,
+    session_id: uuid.UUID,
     requested_village_id: uuid.UUID | None,
 ) -> str:
     if requested_village_id is not None and current_user.role != UserRole.SUPERADMIN:
@@ -127,6 +135,7 @@ def issue_presence_ticket(
 
     _presence_tickets[hash_token(raw_token)] = _PresenceTicketData(
         user_id=current_user.id,
+        session_id=session_id,
         username=current_user.username,
         fullname=current_user.fullname,
         role=current_user.role,
@@ -373,8 +382,6 @@ def unregister_watcher(ticket_data: _PresenceTicketData, queue: asyncio.Queue) -
 
 
 def register_connection(ticket_data: _PresenceTicketData) -> uuid.UUID:
-    _connection_limiter.register(ticket_data.user_id, settings.presence_max_connections_per_user)
-
     conn_id = uuid.uuid4()
     _presence_connections[conn_id] = _PresenceConn(
         user_id=ticket_data.user_id,
@@ -402,8 +409,6 @@ def unregister_connection(conn_id: uuid.UUID) -> None:
     conn = _presence_connections.pop(conn_id, None)
     if conn is None:
         return
-
-    _connection_limiter.unregister(conn.user_id)
 
     if conn.village_id is None:
         user_conns = _presence_superadmins.get(conn.user_id)

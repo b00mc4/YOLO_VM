@@ -25,6 +25,7 @@ from app.core.rate_limit import get_rate_limiter, password_reauth_key, PASSWORD_
 from app.core.account_lockout import AccountLocked, get_account_locker
 from app.core.error_messages import Auth, UserErrors
 from app.core.session_manager import RotatedRefreshToken, session_manager
+from app.core.stream_registry import stream_registry
 from app.schemas.auth import ActiveSessionsResponse, SessionInfo
 from app.core.background import spawn_background
 from app.core.rate_limit import InMemorySingleWorkerRateLimiter, RateLimitExceeded
@@ -223,6 +224,7 @@ async def issue_tokens(db: AsyncSession, request: Request, user: User, remember_
 
     evicted_session_ids = session_manager.add_session(user.id, session_id)
     if evicted_session_ids:
+        stream_registry.revoke_sessions(evicted_session_ids)
         await _delete_sessions(db, evicted_session_ids)
         await audit_service.log_action(
             db,
@@ -256,6 +258,7 @@ async def rotate_refresh_token(db: AsyncSession, request: Request, raw_refresh_t
     is_expired = stored_token.expire_at < datetime.now(timezone.utc)
     if is_expired or not session_manager.is_valid_session(stored_token.user_id, session_id):
         session_manager.remove_session(session_id)
+        stream_registry.revoke_sessions([session_id])
         await db.delete(stored_token)
         await db.commit()
         raise _invalid_refresh_token_error()
@@ -298,6 +301,7 @@ async def _resolve_rotated_refresh_token(db: AsyncSession, request: Request, tok
 
 async def _revoke_session_on_reuse(db: AsyncSession, request: Request, rotation: RotatedRefreshToken) -> None:
     session_manager.remove_session(rotation.session_id)
+    stream_registry.revoke_sessions([rotation.session_id])
     await _delete_sessions(db, [rotation.session_id])
     await audit_service.log_action(
         db,
@@ -326,6 +330,7 @@ async def revoke_refresh_token(db: AsyncSession, request: Request, raw_refresh_t
         session_id, user_id = rotation.session_id, rotation.user_id
 
     session_manager.remove_session(session_id)
+    stream_registry.revoke_sessions([session_id])
     await _delete_sessions(db, [session_id])
     await audit_service.log_action(
         db,
@@ -339,7 +344,7 @@ async def revoke_refresh_token(db: AsyncSession, request: Request, raw_refresh_t
 
 
 async def revoke_all_refresh_tokens(db: AsyncSession, user_id: uuid.UUID) -> None:
-    session_manager.remove_all_sessions(user_id)
+    stream_registry.revoke_sessions(session_manager.remove_all_sessions(user_id))
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
 
 

@@ -390,7 +390,6 @@ async def set_user_active_status(
 
     if not payload.is_active and previous_is_active:
         await auth_service.revoke_all_refresh_tokens(db, target.id)
-        session_manager.remove_all_sessions(target.id)
 
     await db.commit()
     await db.refresh(target)
@@ -512,8 +511,6 @@ async def unlock_user_account(
     await db.commit()
     return target.username
 
-from app.core.session_manager import session_manager
-
 async def delete_user(
     db: AsyncSession,
     request: Request,
@@ -544,9 +541,6 @@ async def delete_user(
     from app.models.notification import Notification
     await db.execute(delete(Notification).where(Notification.user_id == target.id))
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == target.id))
-    
-    # เตะ User ออกจาก Session ใน Memory ทันทีที่โดนลบ
-    session_manager.remove_all_sessions(target.id)
     
     # ลบ Refresh Token ออกจากฐานข้อมูล
     await auth_service.revoke_all_refresh_tokens(db, target.id)

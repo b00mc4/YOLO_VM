@@ -104,10 +104,13 @@ class NotificationErrors:
 
 class RealtimeErrors:
     INVALID_OR_EXPIRED_TICKET = "การเชื่อมต่อหมดอายุ กรุณารีเฟรชหน้าเว็บ"
+    TICKET_REQUIRED = "ต้องระบุ ticket อย่างน้อย 1 รายการ"
+    TICKET_SESSION_MISMATCH = "ticket ที่ส่งมาไม่ได้มาจากเซสชันเดียวกัน"
+    SESSION_REVOKED = "เซสชันนี้ถูกยกเลิกแล้ว กรุณาเข้าสู่ระบบใหม่"
 
     @staticmethod
-    def too_many_connections(max_connections: int) -> str:
-        return f"มีการเชื่อมต่อพร้อมกันเกินจำนวนที่กำหนดสำหรับบัญชีนี้ (สูงสุด {max_connections})"
+    def stream_limit_reached(max_per_session: int) -> str:
+        return f"หน้านี้หยุดรับการแจ้งเตือนแล้ว เนื่องจากเปิดเกิน {max_per_session} หน้าต่างบนอุปกรณ์นี้"
 
 
 class ValidationErrors:

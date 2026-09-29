@@ -64,10 +64,9 @@ class Settings(BaseSettings):
     camera_verify_max_duration_seconds: float = 60.0
     blacklist_email_alert_cooldown_seconds: int = 900
     contact_max_per_user: int = 50
-    presence_max_connections_per_user: int = 5
     presence_sweep_interval_seconds: int = 60
     presence_broadcast_debounce_seconds: float = Field(default=0.3, ge=0)
-    channel_max_connections_per_user: int = 5
+    sse_max_streams_per_session: int = Field(default=5, ge=1)
     channel_queue_size: int = 100
     user_avatar_max_size_bytes: int = 2_097_152  # 2MB
     auth_refresh_cookie_path: str = "/api/auth"
