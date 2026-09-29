@@ -35,7 +35,7 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        user_id, issued_at, jti = decode_access_token(token)
+        user_id, issued_at, session_id = decode_access_token(token)
     except (jwt.PyJWTError, ValueError, KeyError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -43,7 +43,7 @@ async def get_current_user(
             headers=_UNAUTHORIZED_HEADERS,
         ) from None
 
-    if not jti or not session_manager.is_valid_session(user_id, jti):
+    if session_id is None or not session_manager.is_valid_session(user_id, session_id):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="เซสชันหมดอายุ หรือมีการเข้าสู่ระบบจากเครื่องอื่นเกินจำนวนที่กำหนด",
@@ -99,6 +99,7 @@ async def get_current_user(
         )
 
     request.state.user = user
+    request.state.session_id = session_id
     return user
 
 async def get_current_user_from_query(

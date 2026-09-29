@@ -99,7 +99,7 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ):
     user = await auth_service.authenticate_user(db, request, form_data.username, form_data.password, remember_me)
-    access_token, raw_refresh_token = await auth_service.issue_tokens(db, user, remember_me)
+    access_token, raw_refresh_token = await auth_service.issue_tokens(db, request, user, remember_me)
     _set_refresh_cookie(response, raw_refresh_token, remember_me)
     expires_in_sec = settings.access_token_expire_minutes * 60
     return LoginResponse(access_token=access_token, user=user, expires_in=expires_in_sec)
@@ -120,10 +120,11 @@ async def refresh(
     if raw_refresh_token is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Auth.MISSING_REFRESH_TOKEN)
 
-    access_token, new_raw_refresh_token, remember_me = await auth_service.rotate_refresh_token(db, raw_refresh_token)
-    _set_refresh_cookie(response, new_raw_refresh_token, remember_me)
+    tokens = await auth_service.rotate_refresh_token(db, request, raw_refresh_token)
+    if tokens.refresh_token is not None:
+        _set_refresh_cookie(response, tokens.refresh_token, tokens.remember_me)
     expires_in_sec = settings.access_token_expire_minutes * 60
-    return TokenResponse(access_token=access_token, expires_in=expires_in_sec)
+    return TokenResponse(access_token=tokens.access_token, expires_in=expires_in_sec)
 
 
 @router.post(
@@ -138,7 +139,7 @@ async def logout(
 ):
     raw_refresh_token = request.cookies.get("refresh_token")
     if raw_refresh_token is not None:
-        await auth_service.revoke_refresh_token(db, raw_refresh_token)
+        await auth_service.revoke_refresh_token(db, request, raw_refresh_token)
     _clear_refresh_cookie(response)
     return MessageResponse(detail="ออกจากระบบสำเร็จ")
 

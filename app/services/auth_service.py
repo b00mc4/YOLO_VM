@@ -1,5 +1,7 @@
 from __future__ import annotations
 import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from fastapi import BackgroundTasks, HTTPException, Request, status
 from sqlalchemy import delete, select, update
@@ -22,7 +24,8 @@ from app.models.user import User, UserRole
 from app.core.rate_limit import get_rate_limiter, password_reauth_key, PASSWORD_REAUTH_LIMIT, PASSWORD_REAUTH_WINDOW_SECONDS
 from app.core.account_lockout import AccountLocked, get_account_locker
 from app.core.error_messages import Auth, UserErrors
-from app.core.session_manager import session_manager
+from app.core.session_manager import RotatedRefreshToken, session_manager
+from app.schemas.auth import ActiveSessionsResponse, SessionInfo
 from app.core.background import spawn_background
 from app.core.rate_limit import InMemorySingleWorkerRateLimiter, RateLimitExceeded
 from app.core.alert_cooldown import InMemorySingleWorkerCooldown
@@ -45,6 +48,13 @@ _VERIFY_TOKEN_TTL: dict[VerifyType, timedelta] = {
 }
 
 _SET_PASSWORD_ELIGIBLE_TYPES = (VerifyType.INITIAL_SETUP, VerifyType.PASSWORD_RESET)
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshedTokens:
+    access_token: str
+    refresh_token: str | None
+    remember_me: bool
 
 async def authenticate_user(db: AsyncSession, request: Request, username: str, password: str, remember_me: bool):
     normalized_username = username.strip().lower()
@@ -161,31 +171,76 @@ async def authenticate_user(db: AsyncSession, request: Request, username: str, p
 
     return user
 
-async def issue_tokens(db: AsyncSession, user: User, remember_me: bool):
-    raw_refresh_token = generate_secure_token()
-    token_hash = hash_token(raw_refresh_token)
-
+def _refresh_token_lifetime(remember_me: bool) -> timedelta:
     if remember_me:
-        expires_delta = timedelta(days=settings.refresh_token_expire_days)
-    else:
-        expires_delta = timedelta(hours=settings.refresh_token_session_expire_hours)
+        return timedelta(days=settings.refresh_token_expire_days)
+    return timedelta(hours=settings.refresh_token_session_expire_hours)
 
-    refresh_token = RefreshToken(
-        user_id=user.id,
-        token_hash=token_hash,
-        expire_at=datetime.now(timezone.utc) + expires_delta,
-        remember_me=remember_me,
+
+def _invalid_refresh_token_error() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Auth.INVALID_OR_EXPIRED_REFRESH_TOKEN)
+
+
+async def _load_refreshable_user(db: AsyncSession, user_id: uuid.UUID) -> User:
+    result = await db.execute(
+        select(User, Group.is_active.label("village_is_active"))
+        .outerjoin(Group, User.village_id == Group.id)
+        .where(User.id == user_id)
     )
-    db.add(refresh_token)
+    row = result.one_or_none()
+    if row is None:
+        raise _invalid_refresh_token_error()
+
+    user, village_is_active = row
+    if not user.is_active or not user.is_verify:
+        raise _invalid_refresh_token_error()
+    if user.role != UserRole.SUPERADMIN and not village_is_active:
+        raise _invalid_refresh_token_error()
+    return user
+
+
+async def _delete_sessions(db: AsyncSession, session_ids: Sequence[uuid.UUID]) -> None:
+    await db.execute(delete(RefreshToken).where(RefreshToken.id.in_(session_ids)))
+
+
+async def _get_user_village_id(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | None:
+    return await db.scalar(select(User.village_id).where(User.id == user_id))
+
+
+async def issue_tokens(db: AsyncSession, request: Request, user: User, remember_me: bool) -> tuple[str, str]:
+    session_id = uuid.uuid4()
+    raw_refresh_token = generate_secure_token()
+    db.add(
+        RefreshToken(
+            id=session_id,
+            user_id=user.id,
+            token_hash=hash_token(raw_refresh_token),
+            expire_at=datetime.now(timezone.utc) + _refresh_token_lifetime(remember_me),
+            remember_me=remember_me,
+        )
+    )
     await db.commit()
 
-    session_manager.add_session(user.id, token_hash)
-    access_token = create_access_token(user.id, token_hash)
+    evicted_session_ids = session_manager.add_session(user.id, session_id)
+    if evicted_session_ids:
+        await _delete_sessions(db, evicted_session_ids)
+        await audit_service.log_action(
+            db,
+            request,
+            action="session_evicted",
+            detail=(
+                f"signed out {len(evicted_session_ids)} oldest session(s): "
+                f"exceeded {session_manager.max_sessions} concurrent sessions"
+            ),
+            user_id=user.id,
+            village_id=user.village_id,
+        )
+        await db.commit()
 
-    return access_token, raw_refresh_token
+    return create_access_token(user.id, session_id), raw_refresh_token
 
 
-async def rotate_refresh_token(db: AsyncSession, raw_refresh_token: str):
+async def rotate_refresh_token(db: AsyncSession, request: Request, raw_refresh_token: str) -> RefreshedTokens:
     token_hash = hash_token(raw_refresh_token)
     result = await db.execute(
         select(RefreshToken)
@@ -194,67 +249,99 @@ async def rotate_refresh_token(db: AsyncSession, raw_refresh_token: str):
     )
     stored_token = result.scalar_one_or_none()
 
-    if stored_token is None or stored_token.expire_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Auth.INVALID_OR_EXPIRED_REFRESH_TOKEN)
+    if stored_token is None:
+        return await _resolve_rotated_refresh_token(db, request, token_hash)
 
-    result = await db.execute(
-        select(User, Group.is_active.label("village_is_active"))
-        .outerjoin(Group, User.village_id == Group.id)
-        .where(User.id == stored_token.user_id)
-    )
-    row = result.one_or_none()
-    if row is None:
-        user, village_is_active = None, False
-    else:
-        user, village_is_active = row
-
-    if user is None or not user.is_active or not user.is_verify:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Auth.INVALID_OR_EXPIRED_REFRESH_TOKEN)
-
-    # Check if this session was kicked out from memory (e.g. max sessions reached)
-    if not session_manager.is_valid_session(user.id, token_hash):
+    session_id = stored_token.id
+    is_expired = stored_token.expire_at < datetime.now(timezone.utc)
+    if is_expired or not session_manager.is_valid_session(stored_token.user_id, session_id):
+        session_manager.remove_session(session_id)
         await db.delete(stored_token)
         await db.commit()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Auth.INVALID_OR_EXPIRED_REFRESH_TOKEN)
+        raise _invalid_refresh_token_error()
 
-    if user.role != UserRole.SUPERADMIN and not village_is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Auth.INVALID_OR_EXPIRED_REFRESH_TOKEN)
+    user = await _load_refreshable_user(db, stored_token.user_id)
 
-    remember_me = stored_token.remember_me
-    await db.delete(stored_token)
-    session_manager.remove_session_with_grace(token_hash)
-    access_token, new_raw_refresh_token = await issue_tokens(db, user, remember_me)
-    return access_token, new_raw_refresh_token, remember_me
+    new_raw_refresh_token = generate_secure_token()
+    session_manager.record_rotation(token_hash, user.id, session_id)
+    stored_token.token_hash = hash_token(new_raw_refresh_token)
+    stored_token.expire_at = datetime.now(timezone.utc) + _refresh_token_lifetime(stored_token.remember_me)
+    await db.commit()
 
-async def revoke_refresh_token(db: AsyncSession, raw_refresh_token: str):
-    token_hash = hash_token(raw_refresh_token)
-    
-    result = await db.execute(select(RefreshToken.user_id).where(RefreshToken.token_hash == token_hash))
-    user_id = result.scalar_one_or_none()
-    
-    village_id = None
-    if user_id:
-        user_res = await db.execute(select(User.village_id).where(User.id == user_id))
-        village_id = user_res.scalar_one_or_none()
+    return RefreshedTokens(
+        access_token=create_access_token(user.id, session_id),
+        refresh_token=new_raw_refresh_token,
+        remember_me=stored_token.remember_me,
+    )
 
-    session_manager.remove_session_by_id(token_hash)
-    await db.execute(delete(RefreshToken).where(RefreshToken.token_hash == token_hash))
+
+async def _resolve_rotated_refresh_token(db: AsyncSession, request: Request, token_hash: str) -> RefreshedTokens:
+    rotation = session_manager.find_rotation(token_hash)
+    if rotation is None:
+        raise _invalid_refresh_token_error()
+
+    if not rotation.is_within_grace(settings.refresh_reuse_grace_seconds):
+        await _revoke_session_on_reuse(db, request, rotation)
+        raise _invalid_refresh_token_error()
+
+    remember_me = await db.scalar(select(RefreshToken.remember_me).where(RefreshToken.id == rotation.session_id))
+    if remember_me is None or not session_manager.is_valid_session(rotation.user_id, rotation.session_id):
+        raise _invalid_refresh_token_error()
+
+    user = await _load_refreshable_user(db, rotation.user_id)
+    return RefreshedTokens(
+        access_token=create_access_token(user.id, rotation.session_id),
+        refresh_token=None,
+        remember_me=remember_me,
+    )
+
+
+async def _revoke_session_on_reuse(db: AsyncSession, request: Request, rotation: RotatedRefreshToken) -> None:
+    session_manager.remove_session(rotation.session_id)
+    await _delete_sessions(db, [rotation.session_id])
     await audit_service.log_action(
         db,
-        request=None,
+        request,
+        action="refresh_token_reuse_detected",
+        detail="rotated refresh token reused after grace period, session revoked",
+        user_id=rotation.user_id,
+        village_id=await _get_user_village_id(db, rotation.user_id),
+    )
+    await db.commit()
+
+
+async def revoke_refresh_token(db: AsyncSession, request: Request, raw_refresh_token: str) -> None:
+    token_hash = hash_token(raw_refresh_token)
+    result = await db.execute(
+        select(RefreshToken.id, RefreshToken.user_id).where(RefreshToken.token_hash == token_hash)
+    )
+    row = result.one_or_none()
+
+    if row is not None:
+        session_id, user_id = row
+    else:
+        rotation = session_manager.find_rotation(token_hash)
+        if rotation is None:
+            return
+        session_id, user_id = rotation.session_id, rotation.user_id
+
+    session_manager.remove_session(session_id)
+    await _delete_sessions(db, [session_id])
+    await audit_service.log_action(
+        db,
+        request,
         action="logout",
         detail="user logged out and refresh token revoked",
         user_id=user_id,
-        village_id=village_id,
+        village_id=await _get_user_village_id(db, user_id),
     )
     await db.commit()
 
-async def revoke_all_refresh_tokens(db: AsyncSession, user_id: uuid.UUID):
+
+async def revoke_all_refresh_tokens(db: AsyncSession, user_id: uuid.UUID) -> None:
     session_manager.remove_all_sessions(user_id)
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
-    await db.commit()
-    await db.commit()
-    
+
 
 async def change_password(
     db: AsyncSession,
@@ -463,158 +550,55 @@ async def confirm_email_change(db: AsyncSession, request: Request, raw_token: st
 
     return user.username, user.email
 
-from app.schemas.auth import ActiveSessionsResponse, SessionInfo
-
 async def get_active_sessions(db: AsyncSession, request: Request, current_user: User) -> ActiveSessionsResponse:
-    # 1. Fetch unexpired refresh tokens from DB
+    current_session_id = getattr(request.state, "session_id", None)
     result = await db.execute(
-        select(RefreshToken).where(
+        select(RefreshToken)
+        .where(
             RefreshToken.user_id == current_user.id,
-            RefreshToken.expire_at > datetime.now(timezone.utc)
-        ).order_by(RefreshToken.created_at.desc())
+            RefreshToken.expire_at > datetime.now(timezone.utc),
+        )
+        .order_by(RefreshToken.created_at.desc())
     )
-    tokens = result.scalars().all()
-    
-    # 2. Filter with session_manager to get only TRULY active sessions (max 5)
-    current_raw_token = request.cookies.get("refresh_token")
-    current_token_hash = hash_token(current_raw_token) if current_raw_token else None
 
-    active_sessions = []
-    for token in tokens:
-        if session_manager.is_valid_session(current_user.id, token.token_hash):
-            active_sessions.append(
-                SessionInfo(
-                    id=token.id,
-                    created_at=token.created_at,
-                    expire_at=token.expire_at,
-                    is_current=(token.token_hash == current_token_hash)
-                )
-            )
+    sessions = [
+        SessionInfo(
+            id=token.id,
+            created_at=token.created_at,
+            expire_at=token.expire_at,
+            is_current=token.id == current_session_id,
+        )
+        for token in result.scalars().all()
+        if session_manager.is_valid_session(current_user.id, token.id)
+    ]
 
     return ActiveSessionsResponse(
-        active_sessions_count=len(active_sessions),
+        active_sessions_count=len(sessions),
         max_sessions=session_manager.max_sessions,
-        sessions=active_sessions
+        sessions=sessions,
     )
 
+
 async def cleanup_expired_refresh_tokens(db: AsyncSession) -> int:
-    stmt = delete(RefreshToken).where(RefreshToken.expire_at < datetime.now(timezone.utc))
-    result = await db.execute(stmt)
+    result = await db.execute(delete(RefreshToken).where(RefreshToken.expire_at < datetime.now(timezone.utc)))
     await db.commit()
     return result.rowcount
 
+
 async def restore_active_sessions(db: AsyncSession) -> int:
-    stmt = select(RefreshToken).where(RefreshToken.expire_at > datetime.now(timezone.utc)).order_by(RefreshToken.created_at.asc())
-    result = await db.execute(stmt)
-    tokens = result.scalars().all()
-    count = 0
-    for token in tokens:
-        session_manager.add_session(token.user_id, token.token_hash)
-        count += 1
-    return count
-
-async def restore_active_sessions(db: AsyncSession) -> None:
-    stmt = select(RefreshToken).where(RefreshToken.expire_at > datetime.now(timezone.utc)).order_by(RefreshToken.created_at.asc())
-    result = await db.execute(stmt)
-    tokens = result.scalars().all()
-    count = 0
-    for token in tokens:
-        session_manager.add_session(token.user_id, token.token_hash)
-        count += 1
-    return count
-
-from app.schemas.auth import ActiveSessionsResponse, SessionInfo
-
-async def get_active_sessions(db: AsyncSession, request: Request, current_user: User) -> ActiveSessionsResponse:
-    # 1. Fetch unexpired refresh tokens from DB
     result = await db.execute(
-        select(RefreshToken).where(
-            RefreshToken.user_id == current_user.id,
-            RefreshToken.expire_at > datetime.now(timezone.utc)
-        ).order_by(RefreshToken.created_at.desc())
+        select(RefreshToken.id, RefreshToken.user_id)
+        .where(RefreshToken.expire_at > datetime.now(timezone.utc))
+        .order_by(RefreshToken.created_at.asc())
     )
-    tokens = result.scalars().all()
-    
-    # 2. Filter with session_manager to get only TRULY active sessions (max 5)
-    current_raw_token = request.cookies.get("refresh_token")
-    current_token_hash = hash_token(current_raw_token) if current_raw_token else None
+    rows = result.all()
 
-    active_sessions = []
-    for token in tokens:
-        if session_manager.is_valid_session(current_user.id, token.token_hash):
-            active_sessions.append(
-                SessionInfo(
-                    id=token.id,
-                    created_at=token.created_at,
-                    expire_at=token.expire_at,
-                    is_current=(token.token_hash == current_token_hash)
-                )
-            )
+    evicted_session_ids: list[uuid.UUID] = []
+    for session_id, user_id in rows:
+        evicted_session_ids.extend(session_manager.add_session(user_id, session_id))
 
-    return ActiveSessionsResponse(
-        active_sessions_count=len(active_sessions),
-        max_sessions=session_manager.max_sessions,
-        sessions=active_sessions
-    )
+    if evicted_session_ids:
+        await _delete_sessions(db, evicted_session_ids)
+        await db.commit()
 
-async def cleanup_expired_refresh_tokens(db: AsyncSession) -> int:
-    stmt = delete(RefreshToken).where(RefreshToken.expire_at < datetime.now(timezone.utc))
-    result = await db.execute(stmt)
-    await db.commit()
-    return result.rowcount
-
-async def restore_active_sessions(db: AsyncSession) -> int:
-    stmt = select(RefreshToken).where(RefreshToken.expire_at > datetime.now(timezone.utc)).order_by(RefreshToken.created_at.asc())
-    result = await db.execute(stmt)
-    tokens = result.scalars().all()
-    count = 0
-    for token in tokens:
-        session_manager.add_session(token.user_id, token.token_hash)
-        count += 1
-    return count
-
-async def restore_active_sessions(db: AsyncSession) -> None:
-    stmt = select(RefreshToken).where(RefreshToken.expire_at > datetime.now(timezone.utc)).order_by(RefreshToken.created_at.asc())
-    result = await db.execute(stmt)
-    tokens = result.scalars().all()
-    count = 0
-    for token in tokens:
-        session_manager.add_session(token.user_id, token.token_hash)
-        count += 1
-    return count
-
-async def cleanup_expired_refresh_tokens(db: AsyncSession) -> int:
-    stmt = delete(RefreshToken).where(RefreshToken.expire_at < datetime.now(timezone.utc))
-    result = await db.execute(stmt)
-    await db.commit()
-    return result.rowcount
-
-async def restore_active_sessions(db: AsyncSession) -> int:
-    stmt = select(RefreshToken).where(RefreshToken.expire_at > datetime.now(timezone.utc)).order_by(RefreshToken.created_at.asc())
-    result = await db.execute(stmt)
-    tokens = result.scalars().all()
-    count = 0
-    for token in tokens:
-        session_manager.add_session(token.user_id, token.token_hash)
-        count += 1
-    return count
-
-async def restore_active_sessions(db: AsyncSession) -> None:
-    stmt = select(RefreshToken).where(RefreshToken.expire_at > datetime.now(timezone.utc)).order_by(RefreshToken.created_at.asc())
-    result = await db.execute(stmt)
-    tokens = result.scalars().all()
-    count = 0
-    for token in tokens:
-        session_manager.add_session(token.user_id, token.token_hash)
-        count += 1
-    return count
-
-async def restore_active_sessions(db: AsyncSession) -> int:
-    stmt = select(RefreshToken).where(RefreshToken.expire_at > datetime.now(timezone.utc)).order_by(RefreshToken.created_at.asc())
-    result = await db.execute(stmt)
-    tokens = result.scalars().all()
-    count = 0
-    for token in tokens:
-        session_manager.add_session(token.user_id, token.token_hash)
-        count += 1
-    return count
+    return len(rows) - len(evicted_session_ids)

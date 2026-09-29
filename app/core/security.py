@@ -32,21 +32,23 @@ async def verify_password(password: str, hashed: str) -> bool:
     return await run_in_threadpool(_verify)
 
 
-def create_access_token(user_id: uuid.UUID, jti: str):
+def create_access_token(user_id: uuid.UUID, session_id: uuid.UUID) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
+        "sid": str(session_id),
         "iat": now,
         "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
-        "jti": jti,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> tuple[uuid.UUID, datetime, str | None]:
+def decode_access_token(token: str) -> tuple[uuid.UUID, datetime, uuid.UUID | None]:
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     issued_at = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
-    return uuid.UUID(payload["sub"]), issued_at, payload.get("jti")
+    raw_session_id = payload.get("sid")
+    session_id = uuid.UUID(raw_session_id) if raw_session_id else None
+    return uuid.UUID(payload["sub"]), issued_at, session_id
 
 
 def generate_secure_token():
