@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     ai_vision_api_key: str
 
     mediamtx_jwt_private_key_b64: str
-    mediamtx_stream_token_expire_seconds: int = Field(default=300, ge=60, le=86400)
+    mediamtx_stream_token_expire_seconds: int 
 
     camera_resync_concurrency_limit: int = 10
     camera_manual_verify_rate_limit: int = 1
