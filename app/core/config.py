@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     channel_max_connections_per_user: int = 5
     channel_queue_size: int = 100
     user_avatar_max_size_bytes: int = 2_097_152  # 2MB
-    auth_refresh_cookie_path: str = "/api/auth/refresh"
+    auth_refresh_cookie_path: str = "/api/auth"
 
     @model_validator(mode="after")
     def check_cookie_security(self) -> "Settings":
