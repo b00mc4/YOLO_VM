@@ -837,12 +837,7 @@ async def check_and_update_camera_statuses(db: AsyncSession) -> int:
 
     async def _check_camera(camera: Camera) -> tuple[Camera, bool]:
         async with semaphore:
-            mtx_alive, _ = await mediamtx_service.check_source_alive(camera.id)
-            if mtx_alive:
-                return camera, True
-            if not camera.is_online:
-                return camera, False
-            is_online = await check_rtsp_stream(camera.stream_ai)
+            is_online, _ = await mediamtx_service.check_source_alive(camera.id)
             return camera, is_online
 
     outcomes = await asyncio.gather(*(_check_camera(c) for c in cameras))
