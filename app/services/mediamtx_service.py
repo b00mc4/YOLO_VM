@@ -181,6 +181,18 @@ async def _trigger_on_demand_pull(camera_id: uuid.UUID) -> None:
 
 
 
+async def get_source_state(camera_id: uuid.UUID) -> bool | None:
+    """
+    สถานะ source ของกล้องใน MediaMTX สำหรับลูปเช็คสถานะเบื้องหลัง
+    True = online, False = offline, None = ไม่รู้ (เรียก API ไม่ได้/timeout)
+    ผู้เรียกไม่ควรเปลี่ยนสถานะกล้องเมื่อได้ None เพื่อกันแจ้งเตือน offline/online หลอก
+    """
+    info = await _get_path_info(camera_id)
+    if info is None:
+        return None
+    return bool(info.get("exists") and info.get("ready"))
+
+
 _ALIVE_CACHE: dict[str, dict] = {}
 _ALIVE_CACHE_TTL = 3.0
 

@@ -825,70 +825,95 @@ async def push_cameras_online(village_id: uuid.UUID, camera_ids: list[uuid.UUID]
         if failed_services:
             await notify_sync_failure(village_id, camera.id, camera.name, list(dict.fromkeys(failed_services)))
 
+# กันแจ้งเตือนซ้ำจากสถานะที่แกว่ง: ต้องเห็นสถานะใหม่ติดกันหลายรอบก่อนถึงจะถือว่าเปลี่ยนจริง
+# (ลูปรันทุก 10 วินาที ดู main.py)
+_OFFLINE_CONFIRM_ROUNDS = 3  # offline ติดกัน 3 รอบ (~30 วินาที) ถึงจะแจ้ง
+_ONLINE_CONFIRM_ROUNDS = 2   # online ติดกัน 2 รอบ (~20 วินาที) ถึงจะแจ้ง
+_pending_status: dict[uuid.UUID, tuple[bool, int]] = {}
+
+
+def _is_transition_confirmed(camera_id: uuid.UUID, observed: bool, current: bool | None) -> bool:
+    if observed == current:
+        _pending_status.pop(camera_id, None)
+        return False
+
+    prev, count = _pending_status.get(camera_id, (observed, 0))
+    count = count + 1 if prev == observed else 1
+    _pending_status[camera_id] = (observed, count)
+
+    need = _ONLINE_CONFIRM_ROUNDS if observed else _OFFLINE_CONFIRM_ROUNDS
+    if count >= need:
+        _pending_status.pop(camera_id, None)
+        return True
+    return False
+
+
 async def check_and_update_camera_statuses(db: AsyncSession) -> int:
     result = await db.execute(select(Camera).where(Camera.is_active == True))
     cameras = result.scalars().all()
+
+    # ล้าง state ของกล้องที่ถูกลบ/ปิดไปแล้ว กัน dict โตไม่หยุด
+    active_ids = {c.id for c in cameras}
+    for stale_id in [cid for cid in _pending_status if cid not in active_ids]:
+        _pending_status.pop(stale_id, None)
+
     if not cameras:
         return 0
 
     semaphore = asyncio.Semaphore(10)
 
-    async def _check_camera(camera: Camera) -> tuple[Camera, bool]:
+    async def _check_camera(camera: Camera) -> tuple[Camera, bool | None]:
         async with semaphore:
-            is_online, _ = await mediamtx_service.check_source_alive(camera.id)
-            return camera, is_online
+            return camera, await mediamtx_service.get_source_state(camera.id)
 
     outcomes = await asyncio.gather(*(_check_camera(c) for c in cameras))
-    
-    updates_made = 0
-    for camera, is_online in outcomes:
-        if camera.is_online != is_online:
-            camera.is_online = is_online
-            updates_made += 1
-            
-            # Real-time update to dashboard
-            payload = {"camera_id": str(camera.id), "camera_name": camera.name, "is_online": is_online}
-            await channel_service.alerts.publish(camera.village_id, "camera_status_changed", payload)
-            await channel_service.alerts.publish_global("camera_status_changed", {**payload, "village_id": str(camera.village_id)})
 
-            if not is_online:
-                detail = f"กล้อง '{camera.name}' ขาดการเชื่อมต่อ"
-                await notification_service.notify_village(
-                    db, 
-                    camera.village_id, 
-                    "camera_offline", 
-                    detail, 
-                    payload
-                )
-                await audit_service.log_action(
-                    db,
-                    request=None,
-                    action="camera_offline",
-                    detail=detail,
-                    village_id=camera.village_id,
-                )
-                await channel_service.alerts.publish(camera.village_id, "camera_offline", payload)
-                await channel_service.alerts.publish_global("camera_offline", {**payload, "village_id": str(camera.village_id)})
-            else:
-                detail = f"กล้อง '{camera.name}' กลับมาเชื่อมต่อได้ปกติ"
-                await notification_service.notify_village(
-                    db, 
-                    camera.village_id, 
-                    "camera_online", 
-                    detail, 
-                    payload
-                )
-                await audit_service.log_action(
-                    db,
-                    request=None,
-                    action="camera_online",
-                    detail=detail,
-                    village_id=camera.village_id,
-                )
-                await channel_service.alerts.publish(camera.village_id, "camera_online", payload)
-                await channel_service.alerts.publish_global("camera_online", {**payload, "village_id": str(camera.village_id)})
+    to_publish: list[tuple[uuid.UUID, str, dict]] = []
+    updates_made = 0
+    for camera, observed in outcomes:
+        if observed is None:
+            # เรียก MediaMTX ไม่ได้ในรอบนี้ ไม่ตัดสินสถานะ
+            continue
+
+        if camera.is_online is None:
+            # เช็คครั้งแรกของกล้องนี้: บันทึกสถานะเงียบ ๆ ไม่แจ้งเตือน
+            camera.is_online = observed
+            updates_made += 1
+            continue
+
+        if not _is_transition_confirmed(camera.id, observed, camera.is_online):
+            continue
+
+        camera.is_online = observed
+        updates_made += 1
+
+        payload = {"camera_id": str(camera.id), "camera_name": camera.name, "is_online": observed}
+        if observed:
+            action = "camera_online"
+            detail = f"กล้อง '{camera.name}' กลับมาเชื่อมต่อได้ปกติ"
+        else:
+            action = "camera_offline"
+            detail = f"กล้อง '{camera.name}' ขาดการเชื่อมต่อ"
+
+        await notification_service.notify_village(db, camera.village_id, action, detail, payload)
+        await audit_service.log_action(
+            db,
+            request=None,
+            action=action,
+            detail=detail,
+            village_id=camera.village_id,
+        )
+        to_publish.append((camera.village_id, action, payload))
 
     if updates_made > 0:
         await db.commit()
-        
+
+    # publish หลัง commit สำเร็จเท่านั้น ถ้า commit/notify พัง จะไม่มี event หลุดออกไปแล้ววนส่งซ้ำรอบหน้า
+    for village_id, action, payload in to_publish:
+        global_payload = {**payload, "village_id": str(village_id)}
+        await channel_service.alerts.publish(village_id, "camera_status_changed", payload)
+        await channel_service.alerts.publish_global("camera_status_changed", global_payload)
+        await channel_service.alerts.publish(village_id, action, payload)
+        await channel_service.alerts.publish_global(action, global_payload)
+
     return updates_made
