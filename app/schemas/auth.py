@@ -3,6 +3,8 @@ import uuid
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from app.schemas.user import UserRead
+from app.schemas.common import PasswordConfirmMixin
+
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -11,8 +13,6 @@ class TokenResponse(BaseModel):
 
 class LoginResponse(TokenResponse):
     user: UserRead
-
-from app.schemas.common import PasswordConfirmMixin
 
 class SetPasswordRequest(PasswordConfirmMixin):
     token: str = Field(max_length=512)
