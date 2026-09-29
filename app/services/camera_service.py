@@ -514,6 +514,8 @@ async def _upsert_path_guarded(
 ) -> tuple[Camera, bool]:
     async with semaphore:
         ok = await mediamtx_service.upsert_path(camera.id, camera.stream_ai)
+        if not ok:
+            await mediamtx_service.remove_path(camera.id)
         return camera, ok
 
 
@@ -849,6 +851,7 @@ def _is_transition_confirmed(camera_id: uuid.UUID, observed: bool, current: bool
 
 
 async def check_and_update_camera_statuses(db: AsyncSession) -> int:
+    await _resync_cameras(db, scope_filters=[])
     result = await db.execute(select(Camera).where(Camera.is_active == True))
     cameras = result.scalars().all()
 
