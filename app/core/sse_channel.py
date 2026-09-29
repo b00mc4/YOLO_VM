@@ -49,11 +49,9 @@ class SSEChannel:
         self,
         ticket_expire_seconds: int,
         max_connections_per_user: int,
-        queue_maxsize: int,
     ) -> None:
         self._ticket_expire_seconds = ticket_expire_seconds
         self._max_connections_per_user = max_connections_per_user
-        self._queue_maxsize = queue_maxsize
         self._limiter = InMemoryConnectionLimiter()
         self._subscribers: dict[uuid.UUID, set[asyncio.Queue]] = defaultdict(set)
         self._global_subscribers: set[asyncio.Queue] = set()
@@ -103,13 +101,11 @@ class SSEChannel:
     def unregister_connection(self, user_id: uuid.UUID) -> None:
         self._limiter.unregister(user_id)
 
-    def subscribe(self, village_id: uuid.UUID | None) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=self._queue_maxsize)
+    def subscribe(self, village_id: uuid.UUID | None, queue: asyncio.Queue) -> None:
         if village_id is None:
             self._global_subscribers.add(queue)
         else:
             self._subscribers[village_id].add(queue)
-        return queue
 
     def unsubscribe(self, village_id: uuid.UUID | None, queue: asyncio.Queue) -> None:
         if village_id is None:
@@ -149,12 +145,10 @@ class ChannelService:
         self,
         ticket_expire_seconds: int,
         max_connections_per_user: int,
-        queue_maxsize: int,
     ) -> None:
         self._channel = SSEChannel(
             ticket_expire_seconds=ticket_expire_seconds,
             max_connections_per_user=max_connections_per_user,
-            queue_maxsize=queue_maxsize,
         )
 
     def issue_ticket(self, current_user) -> str:
@@ -172,8 +166,8 @@ class ChannelService:
     def unregister_connection(self, user_id: uuid.UUID) -> None:
         self._channel.unregister_connection(user_id)
 
-    def subscribe(self, village_id: uuid.UUID | None) -> asyncio.Queue:
-        return self._channel.subscribe(village_id)
+    def subscribe(self, village_id: uuid.UUID | None, queue: asyncio.Queue) -> None:
+        self._channel.subscribe(village_id, queue)
 
     def unsubscribe(self, village_id: uuid.UUID | None, queue: asyncio.Queue) -> None:
         self._channel.unsubscribe(village_id, queue)

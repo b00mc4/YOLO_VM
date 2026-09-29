@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     contact_max_per_user: int = 50
     presence_max_connections_per_user: int = 5
     presence_sweep_interval_seconds: int = 60
+    presence_broadcast_debounce_seconds: float = Field(default=0.3, ge=0)
     channel_max_connections_per_user: int = 5
     channel_queue_size: int = 100
     user_avatar_max_size_bytes: int = 2_097_152  # 2MB

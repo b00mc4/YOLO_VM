@@ -1,11 +1,11 @@
 from __future__ import annotations
-import asyncio
 import logging
 import time
 import uuid
 from datetime import datetime
 import httpx
 from fastapi import status
+from app.core.background import spawn_background
 from app.core.config import get_settings
 from app.services import mediamtx_auth_service
 from app.core.alert_cooldown import InMemorySingleWorkerCooldown
@@ -221,7 +221,7 @@ async def check_source_alive(camera_id: uuid.UUID) -> tuple[bool, bool]:
     else:
         if _trigger_cooldown.allow(cid_str, cooldown_seconds=_TRIGGER_COOLDOWN_SECONDS):
             logger.info("Triggering MediaMTX on-demand pull for camera_id=%s in background", camera_id)
-            asyncio.create_task(_trigger_on_demand_pull(camera_id))
+            spawn_background(_trigger_on_demand_pull(camera_id))
         result = False, True
 
     _ALIVE_CACHE[cid_str] = {"time": time.time(), "data": result}

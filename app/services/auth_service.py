@@ -23,7 +23,7 @@ from app.core.rate_limit import get_rate_limiter, password_reauth_key, PASSWORD_
 from app.core.account_lockout import AccountLocked, get_account_locker
 from app.core.error_messages import Auth, UserErrors
 from app.core.session_manager import session_manager
-import asyncio
+from app.core.background import spawn_background
 from app.core.rate_limit import InMemorySingleWorkerRateLimiter, RateLimitExceeded
 from app.core.alert_cooldown import InMemorySingleWorkerCooldown
 
@@ -153,7 +153,7 @@ async def authenticate_user(db: AsyncSession, request: Request, username: str, p
         _rapid_login_limiter.check(f"rapid_login:{user.id}", _RAPID_LOGIN_LIMIT, _RAPID_LOGIN_WINDOW_SECONDS)
     except RateLimitExceeded:
         if _rapid_login_alert_cooldown.allow(f"rapid_alert:{user.id}", _RAPID_LOGIN_WINDOW_SECONDS):
-            asyncio.create_task(
+            spawn_background(
                 login_security_service.publish_rapid_login_alert(
                     user, get_client_ip(request), _RAPID_LOGIN_LIMIT, _RAPID_LOGIN_WINDOW_SECONDS
                 )

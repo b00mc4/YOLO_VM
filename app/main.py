@@ -12,8 +12,9 @@ from app.core.error_messages import Common
 from app.schemas.common import ErrorResponse
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
+from app.core.background import cancel_all_background
 from app.db.session import async_session_maker, engine
-from app.services import ai_vision_service, auth_service, camera_service, camera_verification_service, mediamtx_service, detection_service
+from app.services import ai_vision_service, auth_service, camera_service, camera_verification_service, mediamtx_service, detection_service, presence_service, session_validation_service
 
 _AUTH_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
@@ -116,13 +117,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     app.state.startup_cleanup_images_task = cleanup_images_task
 
+    presence_broadcaster_task = asyncio.create_task(presence_service.run_broadcaster())
+    app.state.presence_broadcaster_task = presence_broadcaster_task
+
+    sse_revalidation_task = asyncio.create_task(
+        _run_background_loop(
+            "SSERevalidation",
+            settings.sse_revalidation_interval_seconds,
+            session_validation_service.revoke_invalid_streams,
+            action_message="revoked",
+        )
+    )
+    app.state.sse_revalidation_task = sse_revalidation_task
+
     yield
 
-    for task in (resync_task, verification_resume_task, clean_auth_task, camera_status_task, cleanup_images_task):
+    for task in (
+        resync_task,
+        verification_resume_task,
+        clean_auth_task,
+        camera_status_task,
+        cleanup_images_task,
+        presence_broadcaster_task,
+        sse_revalidation_task,
+    ):
         if not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+
+    await cancel_all_background()
 
     await mediamtx_service.close()
     await ai_vision_service.close()

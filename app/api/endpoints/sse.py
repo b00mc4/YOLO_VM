@@ -2,20 +2,20 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from time import monotonic
-from collections import defaultdict, deque
+from collections.abc import AsyncIterator
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sse_starlette.sse import EventSourceResponse
 from app.api.deps import require_roles
 from app.core.config import get_settings
 from app.core.connection_limit import ConnectionLimitExceeded
+from app.core.error_messages import RealtimeErrors
 from app.core.sse_channel import CLOSE_SENTINEL
+from app.core.stream_registry import StreamHandle, stream_registry
 from app.models.user import User, UserRole
 from app.schemas.presence import PresenceTicketResponse
 from app.schemas.sse import SSETicketResponse
-from app.services import channel_service, presence_service, session_validation_service
-from app.core.error_messages import RealtimeErrors
+from app.services import channel_service, presence_service
 
 router = APIRouter(prefix="/sse", tags=["sse"])
 
@@ -24,40 +24,14 @@ settings = get_settings()
 _ALLOWED_ROLES = (UserRole.ADMIN, UserRole.USER, UserRole.SUPERADMIN)
 _SECURITY_ALLOWED_ROLES = (UserRole.ADMIN, UserRole.SUPERADMIN)
 _PING_INTERVAL_SECONDS = 15
-_active_streams: dict[uuid.UUID, deque[asyncio.Queue]] = defaultdict(deque)
+_PADDING_EVENT = {"event": "padding", "data": " " * 4096}
+_PING_EVENT = {"event": "ping", "data": ""}
+_SSE_HEADERS = {
+    "X-Accel-Buffering": "no",
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+}
 
-
-def _connection_limit_exceeded_response(exc: ConnectionLimitExceeded) -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        detail=RealtimeErrors.too_many_connections(exc.max_connections),
-    )
-
-
-def _revalidation_due(last_revalidated_at: float) -> bool:
-    return monotonic() - last_revalidated_at >= settings.sse_revalidation_interval_seconds
-
-
-async def _base_event_generator(request: Request, user_id: uuid.UUID, village_id: uuid.UUID | None, ticket_password_changed_at: datetime, queue: asyncio.Queue | None):
-    yield {"event": "padding", "data": " " * 4096}
-    last_revalidated_at = monotonic()
-    while True:
-        if _revalidation_due(last_revalidated_at):
-            if not await session_validation_service.is_session_still_valid(user_id, village_id, ticket_password_changed_at):
-                break
-            last_revalidated_at = monotonic()
-
-        if queue is None:
-            await asyncio.sleep(_PING_INTERVAL_SECONDS)
-            continue
-
-        try:
-            event = await asyncio.wait_for(queue.get(), timeout=_PING_INTERVAL_SECONDS)
-            if event is CLOSE_SENTINEL:
-                break
-            yield {"event": event["event"], "data": json.dumps(event["data"], default=str)}
-        except asyncio.TimeoutError:
-            yield {"event": "ping", "data": ""}
+_ChannelTicket = tuple[uuid.UUID, uuid.UUID | None, datetime | None]
 
 
 @router.post("/ticket", response_model=SSETicketResponse, status_code=status.HTTP_201_CREATED)
@@ -66,7 +40,6 @@ async def create_sse_ticket(
 ):
     ticket = channel_service.alerts.issue_ticket(current_user)
     return SSETicketResponse(ticket=ticket)
-
 
 
 @router.post(
@@ -79,8 +52,6 @@ async def create_security_alert_ticket(
 ):
     ticket = channel_service.security_alerts.issue_ticket(current_user)
     return SSETicketResponse(ticket=ticket)
-
-
 
 
 @router.post(
@@ -96,160 +67,111 @@ async def create_presence_ticket(
     return PresenceTicketResponse(ticket=ticket)
 
 
+def _resolve_identity(
+    alerts: _ChannelTicket | None,
+    security: _ChannelTicket | None,
+    presence: presence_service.PresenceTicketData | None,
+) -> _ChannelTicket:
+    if alerts is not None:
+        return alerts
+    if security is not None:
+        return security
+    return presence.user_id, presence.village_id, presence.password_changed_at
 
+
+async def _event_stream(
+    identity: _ChannelTicket,
+    alerts: _ChannelTicket | None,
+    security: _ChannelTicket | None,
+    presence: presence_service.PresenceTicketData | None,
+) -> AsyncIterator[dict]:
+    handle: StreamHandle | None = None
+    alerts_registered = False
+    security_registered = False
+    presence_conn_id: uuid.UUID | None = None
+
+    try:
+        if alerts is not None:
+            channel_service.alerts.register_connection(alerts[0])
+            alerts_registered = True
+        if security is not None:
+            channel_service.security_alerts.register_connection(security[0])
+            security_registered = True
+        if presence is not None:
+            presence_conn_id = presence_service.register_connection(presence)
+
+        user_id, village_id, password_changed_at = identity
+        handle = stream_registry.open(
+            user_id,
+            village_id,
+            password_changed_at,
+            settings.channel_max_connections_per_user,
+        )
+
+        if alerts is not None:
+            channel_service.alerts.subscribe(alerts[1], handle.queue)
+        if security is not None:
+            channel_service.security_alerts.subscribe(security[1], handle.queue)
+        if presence is not None:
+            presence_service.register_watcher(presence, handle.queue)
+
+        yield _PADDING_EVENT
+
+        while True:
+            try:
+                event = await asyncio.wait_for(handle.queue.get(), timeout=_PING_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                yield _PING_EVENT
+                continue
+            if event is CLOSE_SENTINEL:
+                break
+            yield {"event": event["event"], "data": json.dumps(event["data"], default=str)}
+
+    except ConnectionLimitExceeded as exc:
+        yield {"event": "error", "data": json.dumps({"detail": RealtimeErrors.too_many_connections(exc.max_connections)})}
+
+    finally:
+        if handle is not None:
+            if alerts is not None:
+                channel_service.alerts.unsubscribe(alerts[1], handle.queue)
+            if security is not None:
+                channel_service.security_alerts.unsubscribe(security[1], handle.queue)
+            if presence is not None:
+                presence_service.unregister_watcher(presence, handle.queue)
+            stream_registry.close(handle)
+        if presence_conn_id is not None:
+            presence_service.unregister_connection(presence_conn_id)
+        if security_registered:
+            channel_service.security_alerts.unregister_connection(security[0])
+        if alerts_registered:
+            channel_service.alerts.unregister_connection(alerts[0])
 
 
 @router.get("/stream")
 async def multiplex_stream(
-    request: Request,
     alerts_ticket: str | None = Query(None),
     security_ticket: str | None = Query(None),
     presence_ticket: str | None = Query(None),
 ):
-    resolved_alerts, resolved_security, resolved_presence = None, None, None
+    alerts = channel_service.alerts.resolve_ticket(alerts_ticket) if alerts_ticket else None
+    security = channel_service.security_alerts.resolve_ticket(security_ticket) if security_ticket else None
+    presence = presence_service.resolve_presence_ticket(presence_ticket) if presence_ticket else None
 
-    if alerts_ticket:
-        resolved_alerts = channel_service.alerts.resolve_ticket(alerts_ticket)
-    if security_ticket:
-        resolved_security = channel_service.security_alerts.resolve_ticket(security_ticket)
-    if presence_ticket:
-        resolved_presence = presence_service.resolve_presence_ticket(presence_ticket)
-
-    if not (resolved_alerts or resolved_security or resolved_presence):
+    if alerts is None and security is None and presence is None:
         raise HTTPException(status_code=400, detail="At least one ticket must be provided")
 
-    user_id, village_id, password_changed_at = None, None, None
-    if resolved_alerts:
-        user_id, village_id, password_changed_at = resolved_alerts
-    elif resolved_security:
-        user_id, village_id, password_changed_at = resolved_security
-    elif resolved_presence:
-        user_id = resolved_presence.user_id
-        village_id = resolved_presence.village_id
-        password_changed_at = resolved_presence.password_changed_at
-
-    async def event_generator():
-        alerts_active, alerts_q, alerts_uid, alerts_vid = False, None, None, None
-        security_active, security_q, security_uid, security_vid = False, None, None, None
-        presence_active, presence_q, presence_ticket_data, presence_conn_id = False, None, None, None
-        initial_snapshot = None
-        master_queue = asyncio.Queue(maxsize=settings.channel_queue_size)
-        tasks: list[asyncio.Task] = []
-
-        try:
-            if resolved_alerts:
-                alerts_uid, alerts_vid, _ = resolved_alerts
-                channel_service.alerts.register_connection(alerts_uid)
-                alerts_active = True
-                alerts_q = channel_service.alerts.subscribe(alerts_vid)
-
-            if resolved_security:
-                security_uid, security_vid, _ = resolved_security
-                channel_service.security_alerts.register_connection(security_uid)
-                security_active = True
-                security_q = channel_service.security_alerts.subscribe(security_vid)
-
-            if resolved_presence:
-                presence_ticket_data = resolved_presence
-                presence_conn_id = await presence_service.register_connection(presence_ticket_data)
-                presence_active = True
-                presence_q = presence_service.register_watcher(presence_ticket_data)
-                initial_snapshot = await presence_service.build_snapshot_for_ticket(presence_ticket_data)
-
-            if user_id:
-                user_streams = _active_streams[user_id]
-                user_streams.append(master_queue)
-                limit = settings.channel_max_connections_per_user
-                while len(user_streams) > limit:
-                    oldest_q = user_streams.popleft()
-                    while True:
-                        try:
-                            oldest_q.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                    oldest_q.put_nowait({"event": "force_close", "data": "Too many connections"})
-                    oldest_q.put_nowait(CLOSE_SENTINEL)
-
-            async def forwarder(q: asyncio.Queue):
-                try:
-                    while True:
-                        item = await q.get()
-                        if item is CLOSE_SENTINEL:
-                            await master_queue.put(CLOSE_SENTINEL)
-                            break
-                        await master_queue.put(item)
-                except asyncio.CancelledError:
-                    pass
-
-            if alerts_q: tasks.append(asyncio.create_task(forwarder(alerts_q)))
-            if security_q: tasks.append(asyncio.create_task(forwarder(security_q)))
-            if presence_q: tasks.append(asyncio.create_task(forwarder(presence_q)))
-
-            yield {"event": "padding", "data": " " * 4096}
-
-            if initial_snapshot is not None:
-                yield {
-                    "event": "presence_update",
-                    "data": json.dumps(initial_snapshot, default=str),
-                }
-
-            last_revalidated_at = monotonic()
-            while True:
-                if _revalidation_due(last_revalidated_at):
-                    if not await session_validation_service.is_session_still_valid(user_id, village_id, password_changed_at):
-                        break
-                    last_revalidated_at = monotonic()
-
-                try:
-                    event = await asyncio.wait_for(master_queue.get(), timeout=_PING_INTERVAL_SECONDS)
-                    if event is CLOSE_SENTINEL:
-                        break
-                    yield {"event": event["event"], "data": json.dumps(event["data"], default=str)}
-                except asyncio.TimeoutError:
-                    yield {"event": "ping", "data": ""}
-
-        except ConnectionLimitExceeded as exc:
-            yield {"event": "error", "data": json.dumps({"detail": RealtimeErrors.too_many_connections(exc.max_connections)})}
-
-        finally:
-            if user_id:
-                user_streams = _active_streams.get(user_id)
-                if user_streams and master_queue in user_streams:
-                    user_streams.remove(master_queue)
-                    if not user_streams:
-                        _active_streams.pop(user_id, None)
-
-            for task in tasks:
-                task.cancel()
-            if alerts_active:
-                channel_service.alerts.unsubscribe(alerts_vid, alerts_q)
-                channel_service.alerts.unregister_connection(alerts_uid)
-            if security_active:
-                channel_service.security_alerts.unsubscribe(security_vid, security_q)
-                channel_service.security_alerts.unregister_connection(security_uid)
-            if presence_active:
-                if presence_q: presence_service.unregister_watcher(presence_ticket_data, presence_q)
-                if presence_conn_id: await presence_service.unregister_connection(presence_conn_id)
-
+    identity = _resolve_identity(alerts, security, presence)
     return EventSourceResponse(
-        event_generator(),
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-        }
+        _event_stream(identity, alerts, security, presence),
+        headers=_SSE_HEADERS,
     )
+
 
 @router.get("/test")
 async def sse_test(request: Request):
     async def event_generator():
-        yield {"event": "padding", "data": " " * 4096}
+        yield _PADDING_EVENT
         for i in range(5):
             yield {"event": "test", "data": f"message {i}"}
             await asyncio.sleep(1)
-    return EventSourceResponse(
-        event_generator(),
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-        }
-    )
+    return EventSourceResponse(event_generator(), headers=_SSE_HEADERS)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import enum
+import logging
 import uuid
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
@@ -24,10 +25,11 @@ from app.schemas.presence import (
 from app.core.error_messages import Common, RealtimeErrors
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 _MAX_TRACKED_TICKETS = 10_000
-_BROADCAST_QUEUE_MAXSIZE = 20
+_PRESENCE_EVENT = "presence_update"
 
 
 class PresenceViewScope(str, enum.Enum):
@@ -48,6 +50,9 @@ class _PresenceTicketData:
     view_village_id: uuid.UUID | None
     expire_at: datetime
     password_changed_at: datetime
+
+
+PresenceTicketData = _PresenceTicketData
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,51 +157,42 @@ def _representative_conn(conn_ids: set[uuid.UUID]) -> _PresenceConn | None:
     return None
 
 
+def _to_entry(conn: _PresenceConn) -> PresenceUserEntry:
+    return PresenceUserEntry(
+        user_id=conn.user_id,
+        username=conn.username,
+        fullname=conn.fullname,
+        role=conn.role,
+    )
+
+
 def _online_superadmins() -> list[PresenceUserEntry]:
     entries: list[PresenceUserEntry] = []
     for conn_ids in _presence_superadmins.values():
         conn = _representative_conn(conn_ids)
-        if conn is None:
-            continue
-        entries.append(
-            PresenceUserEntry(
-                user_id=conn.user_id,
-                username=conn.username,
-                fullname=conn.fullname,
-                role=conn.role,
-            )
-        )
+        if conn is not None:
+            entries.append(_to_entry(conn))
     return entries
 
 
 def _online_users_in_village(village_id: uuid.UUID) -> list[PresenceUserEntry]:
-    users_in_village = _presence_by_village.get(village_id, {})
     entries: list[PresenceUserEntry] = []
-    for conn_ids in users_in_village.values():
+    for conn_ids in _presence_by_village.get(village_id, {}).values():
         conn = _representative_conn(conn_ids)
-        if conn is None:
-            continue
-        entries.append(
-            PresenceUserEntry(
-                user_id=conn.user_id,
-                username=conn.username,
-                fullname=conn.fullname,
-                role=conn.role,
-            )
-        )
+        if conn is not None:
+            entries.append(_to_entry(conn))
     return entries
 
 
-async def _build_village_snapshot(village_id: uuid.UUID) -> VillagePresenceSnapshot:
+def _build_village_snapshot(village_id: uuid.UUID) -> dict:
     online_users = _online_users_in_village(village_id)
     online_superadmins = _online_superadmins()
-
     return VillagePresenceSnapshot(
         village_id=village_id,
         total_online=len(online_users) + len(online_superadmins),
         online_users=online_users,
         online_superadmins=online_superadmins,
-    )
+    ).model_dump(mode="json")
 
 
 async def _fetch_village_names(village_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
@@ -207,7 +203,7 @@ async def _fetch_village_names(village_ids: list[uuid.UUID]) -> dict[uuid.UUID, 
         return {row.id: row.name for row in result.all()}
 
 
-async def _build_all_villages_snapshot() -> AllVillagesPresenceSnapshot:
+async def _build_all_villages_snapshot() -> dict:
     village_ids = [vid for vid, users in _presence_by_village.items() if users]
     village_names = await _fetch_village_names(village_ids)
     online_superadmins = _online_superadmins()
@@ -233,110 +229,153 @@ async def _build_all_villages_snapshot() -> AllVillagesPresenceSnapshot:
         total_online=total_villager_online + len(online_superadmins),
         villages=villages,
         online_superadmins=online_superadmins,
-    )
+    ).model_dump(mode="json")
 
 
-async def build_snapshot_for_ticket(ticket_data: _PresenceTicketData) -> dict | None:
-    if ticket_data.view_scope == PresenceViewScope.NONE:
-        return None
-    if ticket_data.view_scope in (PresenceViewScope.OWN_VILLAGE, PresenceViewScope.SINGLE_VILLAGE):
-        snapshot = await _build_village_snapshot(ticket_data.view_village_id)
-        return snapshot.model_dump(mode="json")
-    snapshot = await _build_all_villages_snapshot()
-    return snapshot.model_dump(mode="json")
+@dataclass(frozen=True, slots=True)
+class _BroadcastBatch:
+    dirty_villages: frozenset[uuid.UUID]
+    superadmin_changed: bool
+    pending_initial: tuple[tuple[asyncio.Queue, _PresenceTicketData], ...]
+
+    @property
+    def has_changes(self) -> bool:
+        return self.superadmin_changed or bool(self.dirty_villages)
+
+    @property
+    def needs_all_snapshot(self) -> bool:
+        if self.has_changes and _broadcast_subscribers_all:
+            return True
+        return any(ticket.view_scope == PresenceViewScope.ALL for _, ticket in self.pending_initial)
 
 
-def _subscribers_watching_village(village_id: uuid.UUID) -> list[asyncio.Queue]:
-    return list(_broadcast_subscribers_by_village.get(village_id, set())) + list(
-        _broadcast_subscribers_all
-    )
+class _BroadcastScheduler:
+    def __init__(self) -> None:
+        self._dirty_villages: set[uuid.UUID] = set()
+        self._superadmin_changed = False
+        self._pending_initial: list[tuple[asyncio.Queue, _PresenceTicketData]] = []
+        self._wake = asyncio.Event()
+
+    def mark_village(self, village_id: uuid.UUID) -> None:
+        self._dirty_villages.add(village_id)
+        self._wake.set()
+
+    def mark_superadmins(self) -> None:
+        self._superadmin_changed = True
+        self._wake.set()
+
+    def request_initial(self, queue: asyncio.Queue, ticket_data: _PresenceTicketData) -> None:
+        self._pending_initial.append((queue, ticket_data))
+        self._wake.set()
+
+    async def next_batch(self, debounce_seconds: float) -> _BroadcastBatch:
+        await self._wake.wait()
+        if debounce_seconds > 0:
+            await asyncio.sleep(debounce_seconds)
+        self._wake.clear()
+        batch = _BroadcastBatch(
+            dirty_villages=frozenset(self._dirty_villages),
+            superadmin_changed=self._superadmin_changed,
+            pending_initial=tuple(self._pending_initial),
+        )
+        self._dirty_villages.clear()
+        self._superadmin_changed = False
+        self._pending_initial.clear()
+        return batch
 
 
-async def _broadcast_to_village_watchers(village_id: uuid.UUID) -> None:
-    watchers = _subscribers_watching_village(village_id)
-    if not watchers:
-        return
+_scheduler = _BroadcastScheduler()
 
-    single_village_snapshot = (await _build_village_snapshot(village_id)).model_dump(mode="json")
-    all_snapshot_cache: dict | None = None
 
-    for queue in watchers:
-        if queue in _broadcast_subscribers_all:
-            if all_snapshot_cache is None:
-                all_snapshot_cache = (await _build_all_villages_snapshot()).model_dump(mode="json")
-            item = {"event": "presence_update", "data": all_snapshot_cache}
-            if not try_emit(queue, item):
-                _broadcast_subscribers_all.discard(queue)
+def _is_watching(queue: asyncio.Queue, ticket_data: _PresenceTicketData) -> bool:
+    if ticket_data.view_scope == PresenceViewScope.ALL:
+        return queue in _broadcast_subscribers_all
+    return queue in _broadcast_subscribers_by_village.get(ticket_data.view_village_id, ())
+
+
+def _emit(subscribers: set[asyncio.Queue], data: dict, delivered: set[asyncio.Queue]) -> None:
+    item = {"event": _PRESENCE_EVENT, "data": data}
+    for queue in list(subscribers):
+        if try_emit(queue, item):
+            delivered.add(queue)
         else:
-            item = {"event": "presence_update", "data": single_village_snapshot}
-            if not try_emit(queue, item):
-                subscribers = _broadcast_subscribers_by_village.get(village_id)
-                if subscribers is not None:
-                    subscribers.discard(queue)
-                    if not subscribers:
-                        _broadcast_subscribers_by_village.pop(village_id, None)
+            subscribers.discard(queue)
 
 
-async def _broadcast_superadmin_change() -> None:
-    has_any_watcher = any(_broadcast_subscribers_by_village.values()) or _broadcast_subscribers_all
-    if not has_any_watcher:
-        return
+async def _flush(batch: _BroadcastBatch) -> None:
+    all_snapshot = await _build_all_villages_snapshot() if batch.needs_all_snapshot else None
 
-    village_snapshot_cache: dict[uuid.UUID, dict] = {}
+    village_snapshots: dict[uuid.UUID, dict] = {}
 
-    for village_id, subscribers in list(_broadcast_subscribers_by_village.items()):
+    def village_snapshot(village_id: uuid.UUID) -> dict:
+        if village_id not in village_snapshots:
+            village_snapshots[village_id] = _build_village_snapshot(village_id)
+        return village_snapshots[village_id]
+
+    delivered: set[asyncio.Queue] = set()
+
+    if batch.superadmin_changed:
+        target_villages = list(_broadcast_subscribers_by_village)
+    else:
+        target_villages = [vid for vid in batch.dirty_villages if vid in _broadcast_subscribers_by_village]
+
+    for village_id in target_villages:
+        subscribers = _broadcast_subscribers_by_village.get(village_id)
         if not subscribers:
             continue
-        if village_id not in village_snapshot_cache:
-            village_snapshot_cache[village_id] = (
-                await _build_village_snapshot(village_id)
-            ).model_dump(mode="json")
-
-        item = {"event": "presence_update", "data": village_snapshot_cache[village_id]}
-        dead = [queue for queue in list(subscribers) if not try_emit(queue, item)]
-        for queue in dead:
-            subscribers.discard(queue)
+        _emit(subscribers, village_snapshot(village_id), delivered)
         if not subscribers:
             _broadcast_subscribers_by_village.pop(village_id, None)
 
-    if _broadcast_subscribers_all:
-        all_snapshot_cache = (await _build_all_villages_snapshot()).model_dump(mode="json")
-        item = {"event": "presence_update", "data": all_snapshot_cache}
-        dead = [queue for queue in list(_broadcast_subscribers_all) if not try_emit(queue, item)]
-        for queue in dead:
-            _broadcast_subscribers_all.discard(queue)
+    if all_snapshot is not None and batch.has_changes and _broadcast_subscribers_all:
+        _emit(_broadcast_subscribers_all, all_snapshot, delivered)
+
+    for queue, ticket_data in batch.pending_initial:
+        if queue in delivered or not _is_watching(queue, ticket_data):
+            continue
+        if ticket_data.view_scope == PresenceViewScope.ALL:
+            data = all_snapshot
+        else:
+            data = village_snapshot(ticket_data.view_village_id)
+        if data is not None:
+            try_emit(queue, {"event": _PRESENCE_EVENT, "data": data})
 
 
-def register_watcher(ticket_data: _PresenceTicketData) -> asyncio.Queue | None:
+async def run_broadcaster() -> None:
+    while True:
+        batch = await _scheduler.next_batch(settings.presence_broadcast_debounce_seconds)
+        try:
+            await _flush(batch)
+        except Exception:
+            logger.exception("Presence broadcast flush failed")
+
+
+def register_watcher(ticket_data: _PresenceTicketData, queue: asyncio.Queue) -> None:
     if ticket_data.view_scope == PresenceViewScope.NONE:
-        return None
-
-    queue: asyncio.Queue = asyncio.Queue(maxsize=_BROADCAST_QUEUE_MAXSIZE)
+        return
     if ticket_data.view_scope == PresenceViewScope.ALL:
         _broadcast_subscribers_all.add(queue)
     else:
         _broadcast_subscribers_by_village[ticket_data.view_village_id].add(queue)
-    return queue
+    _scheduler.request_initial(queue, ticket_data)
 
 
-def unregister_watcher(ticket_data: _PresenceTicketData, queue: asyncio.Queue | None) -> None:
-    if queue is None:
-        return
+def unregister_watcher(ticket_data: _PresenceTicketData, queue: asyncio.Queue) -> None:
     if ticket_data.view_scope == PresenceViewScope.ALL:
         _broadcast_subscribers_all.discard(queue)
-    else:
-        subscribers = _broadcast_subscribers_by_village.get(ticket_data.view_village_id)
-        if subscribers is not None:
-            subscribers.discard(queue)
-            if not subscribers:
-                _broadcast_subscribers_by_village.pop(ticket_data.view_village_id, None)
+        return
+    subscribers = _broadcast_subscribers_by_village.get(ticket_data.view_village_id)
+    if subscribers is None:
+        return
+    subscribers.discard(queue)
+    if not subscribers:
+        _broadcast_subscribers_by_village.pop(ticket_data.view_village_id, None)
 
 
-async def register_connection(ticket_data: _PresenceTicketData) -> uuid.UUID:
+def register_connection(ticket_data: _PresenceTicketData) -> uuid.UUID:
     _connection_limiter.register(ticket_data.user_id, settings.presence_max_connections_per_user)
 
     conn_id = uuid.uuid4()
-
     _presence_connections[conn_id] = _PresenceConn(
         user_id=ticket_data.user_id,
         username=ticket_data.username,
@@ -346,21 +385,20 @@ async def register_connection(ticket_data: _PresenceTicketData) -> uuid.UUID:
     )
 
     if ticket_data.village_id is None:
-        was_first_connection = not _presence_superadmins.get(ticket_data.user_id)
-        _presence_superadmins[ticket_data.user_id].add(conn_id)
-        if was_first_connection:
-            await _broadcast_superadmin_change()
+        user_conns = _presence_superadmins[ticket_data.user_id]
+        if not user_conns:
+            _scheduler.mark_superadmins()
+        user_conns.add(conn_id)
     else:
-        village_users = _presence_by_village[ticket_data.village_id]
-        was_first_connection = not village_users.get(ticket_data.user_id)
-        village_users[ticket_data.user_id].add(conn_id)
-        if was_first_connection:
-            await _broadcast_to_village_watchers(ticket_data.village_id)
+        user_conns = _presence_by_village[ticket_data.village_id][ticket_data.user_id]
+        if not user_conns:
+            _scheduler.mark_village(ticket_data.village_id)
+        user_conns.add(conn_id)
 
     return conn_id
 
 
-async def unregister_connection(conn_id: uuid.UUID) -> None:
+def unregister_connection(conn_id: uuid.UUID) -> None:
     conn = _presence_connections.pop(conn_id, None)
     if conn is None:
         return
@@ -372,25 +410,21 @@ async def unregister_connection(conn_id: uuid.UUID) -> None:
         if user_conns is None:
             return
         user_conns.discard(conn_id)
-        became_offline = not user_conns
-        if became_offline:
+        if not user_conns:
             _presence_superadmins.pop(conn.user_id, None)
-            await _broadcast_superadmin_change()
+            _scheduler.mark_superadmins()
         return
 
     village_users = _presence_by_village.get(conn.village_id)
     if village_users is None:
         return
-
     user_conns = village_users.get(conn.user_id)
     if user_conns is None:
         return
 
     user_conns.discard(conn_id)
-    became_offline = not user_conns
-    if became_offline:
+    if not user_conns:
         village_users.pop(conn.user_id, None)
+        _scheduler.mark_village(conn.village_id)
     if not village_users:
         _presence_by_village.pop(conn.village_id, None)
-    if became_offline:
-        await _broadcast_to_village_watchers(conn.village_id)
