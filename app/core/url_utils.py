@@ -56,40 +56,48 @@ def redact_rtsp_url(raw: str) -> str:
     except Exception:
         return raw
 
-async def check_rtsp_stream(url: str, timeout: float = 2.0) -> bool:
-    try:
-        parsed = urlparse(url)
-        host = parsed.hostname
-        if not host:
-            return False
-        port = parsed.port or 554
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port),
-            timeout=timeout
-        )
-        
-        request = (
-            f"DESCRIBE {url} RTSP/1.0\r\n"
-            f"CSeq: 1\r\n"
-            f"Accept: application/sdp\r\n"
-            f"User-Agent: LPR-Checker\r\n\r\n"
-        )
-        writer.write(request.encode('utf-8'))
-        await asyncio.wait_for(writer.drain(), timeout=timeout)
+async def check_rtsp_stream(url: str, timeout: float = 5.0, retries: int = 1) -> bool:
+    for attempt in range(retries + 1):
+        writer = None
+        try:
+            parsed = urlparse(url)
+            host = parsed.hostname
+            if not host:
+                return False
+            port = parsed.port or 554
 
-        response = await asyncio.wait_for(reader.read(1024), timeout=timeout)
-        writer.close()
-        
-        if not response:
-            return False
-            
-        resp_str = response.decode('utf-8', errors='ignore')
-        if "404" in resp_str:
-            return False
-            
-        if resp_str.startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
-            return True
-            
-        return False
-    except Exception:
-        return False
+            netloc = f"{host}:{port}" if parsed.port else host
+            request_uri = urlunsplit((parsed.scheme, netloc, parsed.path or "/", parsed.query, parsed.fragment))
+
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=timeout,
+            )
+            request = (
+                f"DESCRIBE {request_uri} RTSP/1.0\r\n"
+                f"CSeq: 1\r\n"
+                f"Accept: application/sdp\r\n"
+                f"User-Agent: LPR-Checker\r\n\r\n"
+            )
+            writer.write(request.encode("utf-8"))
+            await asyncio.wait_for(writer.drain(), timeout=timeout)
+
+            response = await asyncio.wait_for(reader.read(1024), timeout=timeout)
+            if response:
+                resp_str = response.decode("utf-8", errors="ignore")
+                if "404" not in resp_str and resp_str.startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+                    return True
+        except Exception:
+            pass
+        finally:
+            if writer:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+
+        if attempt < retries:
+            await asyncio.sleep(1.0)
+
+    return False
