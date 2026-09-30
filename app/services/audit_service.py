@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 from fastapi import Request, HTTPException, status
-from sqlalchemy import func, select, or_
+from sqlalchemy import func, select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit_log import AuditLog
 from app.models.group import Group
@@ -19,6 +19,11 @@ _USER_AGENT_MAX_LENGTH = 512
 
 _BACKGROUND_IP_ADDRESS = "background"
 _BACKGROUND_USER_AGENT = "background-task"
+
+_SYSTEM_WIDE_ACTIONS = (
+    AuditLogAction.streaming_server_down.value,
+    AuditLogAction.streaming_server_recovered.value,
+)
 
 
 async def log_action(
@@ -79,7 +84,12 @@ def _build_audit_log_filters(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=Common.VILLAGE_ID_NOT_ALLOWED_FOR_ROLE,
             )
-        filters.append(AuditLog.village_id == current_user.village_id)
+        filters.append(
+            or_(
+                AuditLog.village_id == current_user.village_id,
+                and_(AuditLog.village_id.is_(None), AuditLog.action.in_(_SYSTEM_WIDE_ACTIONS)),
+            )
+        )
         filters.append(
             or_(
                 User.role != UserRole.SUPERADMIN,
