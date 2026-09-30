@@ -46,6 +46,8 @@ class AuditLogAction(str, Enum):
     rapid_login_detected = "rapid_login_detected"
     refresh_token_reuse_detected = "refresh_token_reuse_detected"
     session_evicted = "session_evicted"
+    streaming_server_down = "streaming_server_down"
+    streaming_server_recovered = "streaming_server_recovered"
     user_activated = "user_activated"
     user_avatar_added = "user_avatar_added"
     user_avatar_removed = "user_avatar_removed"

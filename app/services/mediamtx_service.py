@@ -3,6 +3,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
+from enum import Enum
 import httpx
 from fastapi import status
 from app.core.background import spawn_background
@@ -35,6 +36,13 @@ async def close() -> None:
 _SOURCE_ON_DEMAND_START_TIMEOUT_SECONDS = 15.0
 _TRIGGER_COOLDOWN_SECONDS = 30.0
 _trigger_cooldown = InMemorySingleWorkerCooldown()
+
+
+class StreamFailure(str, Enum):
+    UNREACHABLE = "unreachable"
+    TIMEOUT = "timeout"
+    AUTH_FAILED = "auth_failed"
+    SERVER_ERROR = "server_error"
 
 
 def _auth() -> httpx.BasicAuth:
@@ -157,6 +165,25 @@ async def get_source_state(camera_id: uuid.UUID) -> bool | None:
     if info is None:
         return None
     return bool(info.get("exists") and info.get("ready"))
+
+
+async def probe_health() -> StreamFailure | None:
+    url = f"{settings.mediamtx_api_url.rstrip('/')}/v3/config/global/get"
+
+    try:
+        response = await get_client().get(url, auth=_auth())
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        return StreamFailure.UNREACHABLE
+    except httpx.TimeoutException:
+        return StreamFailure.TIMEOUT
+    except httpx.HTTPError:
+        return StreamFailure.UNREACHABLE
+
+    if response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN):
+        return StreamFailure.AUTH_FAILED
+    if response.status_code >= status.HTTP_400_BAD_REQUEST:
+        return StreamFailure.SERVER_ERROR
+    return None
 
 
 _ALIVE_CACHE: dict[str, dict] = {}

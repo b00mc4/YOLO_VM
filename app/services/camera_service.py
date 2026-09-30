@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from fastapi import BackgroundTasks, HTTPException, Request, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,9 +23,11 @@ from app.schemas.camera import (
     CameraUpdate,
     CameraVerificationCheckRead,
 )
+from app.schemas.audit_log import AuditLogAction
 from app.schemas.common import PaginatedResponse
 from app.services import ai_vision_service, audit_service, camera_verification_service, mediamtx_service, notification_service, channel_service
 from app.services.ai_vision_service import VerificationCheckResult
+from app.services.mediamtx_service import StreamFailure
 from app.core.error_messages import CameraErrors, Common, VillageErrors
 from app.core.url_utils import check_rtsp_stream
 
@@ -847,7 +850,87 @@ def _is_transition_confirmed(camera_id: uuid.UUID, observed: bool, current: bool
     return False
 
 
+_STREAM_DOWN_CONFIRM_ROUNDS = 3
+_STREAM_UP_CONFIRM_ROUNDS = 2
+_STREAM_FAILURE_MESSAGES: dict[StreamFailure, str] = {
+    StreamFailure.UNREACHABLE: "เชื่อมต่อเซิร์ฟเวอร์สตรีมมิ่งไม่ได้",
+    StreamFailure.TIMEOUT: "เซิร์ฟเวอร์สตรีมมิ่งไม่ตอบสนอง",
+    StreamFailure.AUTH_FAILED: "ยืนยันสิทธิ์กับเซิร์ฟเวอร์สตรีมมิ่งไม่ผ่าน",
+    StreamFailure.SERVER_ERROR: "เซิร์ฟเวอร์สตรีมมิ่งทำงานผิดพลาด",
+}
+
+
+@dataclass
+class _StreamServerState:
+    is_down: bool = False
+    streak: int = 0
+
+
+_stream_server = _StreamServerState()
+
+
+async def _announce_stream_server_change(db: AsyncSession, failure: StreamFailure | None) -> None:
+    if failure is None:
+        action = AuditLogAction.streaming_server_recovered
+        detail = "ระบบสตรีมมิ่งกลับมาทำงานปกติ"
+    else:
+        action = AuditLogAction.streaming_server_down
+        detail = f"ระบบสตรีมมิ่งมีปัญหา: {_STREAM_FAILURE_MESSAGES[failure]}"
+
+    payload = {
+        "is_down": failure is not None,
+        "reason": failure.value if failure is not None else None,
+        "message": detail,
+    }
+
+    result = await db.execute(select(Group.id).where(Group.is_active.is_(True)))
+    village_ids = list(result.scalars().all())
+
+    for village_id in village_ids:
+        await audit_service.log_action(
+            db,
+            request=None,
+            action=action,
+            detail=detail,
+            village_id=village_id,
+        )
+    await db.commit()
+
+    for village_id in village_ids:
+        await channel_service.alerts.publish(village_id, action.value, payload)
+    await channel_service.alerts.publish_global(action.value, payload)
+
+
+async def _check_stream_server(db: AsyncSession) -> bool:
+    failure = await mediamtx_service.probe_health()
+    observed_down = failure is not None
+
+    if observed_down == _stream_server.is_down:
+        _stream_server.streak = 0
+        return not observed_down
+
+    _stream_server.streak += 1
+    need = _STREAM_DOWN_CONFIRM_ROUNDS if observed_down else _STREAM_UP_CONFIRM_ROUNDS
+    if _stream_server.streak < need:
+        return not observed_down
+
+    await _announce_stream_server_change(db, failure)
+    _stream_server.is_down = observed_down
+    _stream_server.streak = 0
+
+    if observed_down:
+        _pending_status.clear()
+        logger.warning("MediaMTX streaming server is down: %s", failure.value)
+    else:
+        logger.info("MediaMTX streaming server recovered")
+
+    return not observed_down
+
+
 async def check_and_update_camera_statuses(db: AsyncSession) -> int:
+    if not await _check_stream_server(db):
+        return 0
+
     await _resync_cameras(db, scope_filters=[])
     result = await db.execute(select(Camera).where(Camera.is_active == True))
     cameras = result.scalars().all()
