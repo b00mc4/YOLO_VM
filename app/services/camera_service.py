@@ -403,7 +403,7 @@ async def update_camera(
     camera = await get_camera(db, current_user, camera_id)
     village = await _get_village_or_404(db, camera.village_id)
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True, exclude_none=True)
 
     if "is_active" in update_data and update_data["is_active"] and not village.is_active:
         raise HTTPException(

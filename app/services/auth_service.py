@@ -204,6 +204,20 @@ async def _delete_sessions(db: AsyncSession, session_ids: Sequence[uuid.UUID]) -
     await db.execute(delete(RefreshToken).where(RefreshToken.id.in_(session_ids)))
 
 
+async def _purge_expired_sessions(db: AsyncSession, user_id: uuid.UUID | None = None) -> list[uuid.UUID]:
+    stmt = delete(RefreshToken).where(RefreshToken.expire_at < datetime.now(timezone.utc))
+    if user_id is not None:
+        stmt = stmt.where(RefreshToken.user_id == user_id)
+    result = await db.execute(stmt.returning(RefreshToken.id))
+    return list(result.scalars().all())
+
+
+def _forget_sessions(session_ids: Sequence[uuid.UUID]) -> None:
+    for session_id in session_ids:
+        session_manager.remove_session(session_id)
+    stream_registry.revoke_sessions(session_ids)
+
+
 async def _get_user_village_id(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | None:
     return await db.scalar(select(User.village_id).where(User.id == user_id))
 
@@ -220,7 +234,9 @@ async def issue_tokens(db: AsyncSession, request: Request, user: User, remember_
             remember_me=remember_me,
         )
     )
+    expired_session_ids = await _purge_expired_sessions(db, user.id)
     await db.commit()
+    _forget_sessions(expired_session_ids)
 
     evicted_session_ids = session_manager.add_session(user.id, session_id)
     if evicted_session_ids:
@@ -585,9 +601,10 @@ async def get_active_sessions(db: AsyncSession, request: Request, current_user: 
 
 
 async def cleanup_expired_refresh_tokens(db: AsyncSession) -> int:
-    result = await db.execute(delete(RefreshToken).where(RefreshToken.expire_at < datetime.now(timezone.utc)))
+    expired_session_ids = await _purge_expired_sessions(db)
     await db.commit()
-    return result.rowcount
+    _forget_sessions(expired_session_ids)
+    return len(expired_session_ids)
 
 
 async def restore_active_sessions(db: AsyncSession) -> int:

@@ -26,7 +26,9 @@ class UserCreate(BaseModel):
 
     @field_validator("username", mode="before")
     @classmethod
-    def normalize_username(cls, v: str) -> str:
+    def normalize_username(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
         return v.strip().lower()
 
     @field_validator("username")

@@ -127,7 +127,7 @@ async def update_village(
 ) -> Group:
     village = await get_village(db, village_id)
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True, exclude_none=True)
     previous_is_active = village.is_active
 
     for field, value in update_data.items():

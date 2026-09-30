@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.rate_limit import get_rate_limiter, RateLimitExceeded
+from app.core.request_utils import get_client_ip
 from app.core.error_messages import Common
 from app.schemas.common import ErrorResponse
 from app.core.config import get_settings
@@ -16,7 +17,7 @@ from app.core.background import cancel_all_background
 from app.db.session import async_session_maker, engine
 from app.services import ai_vision_service, auth_service, camera_service, camera_verification_service, mediamtx_service, detection_service, presence_service, session_validation_service
 
-_AUTH_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+_AUTH_CLEANUP_INTERVAL_SECONDS = 60 * 60
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -189,7 +190,7 @@ async def security_middleware(request: Request, call_next):
     is_post_detection = request.url.path.rstrip("/") == "/api/detections" and request.method == "POST"
 
     if not is_health and not is_sse and not is_post_detection:
-        client_ip = request.client.host if request.client else "127.0.0.1"
+        client_ip = get_client_ip(request)
         limiter = get_rate_limiter()
         try:
             limiter.check(f"global:{client_ip}", limit=_GLOBAL_RATE_LIMIT, window_seconds=_GLOBAL_RATE_LIMIT_WINDOW)

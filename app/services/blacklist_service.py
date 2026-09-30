@@ -156,7 +156,7 @@ async def update_blacklist_entry(
     entry = await _get_entry_or_404(db, entry_id)
     verify_village_scope(current_user, entry.village_id)
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True, exclude_none=True)
     for field, value in update_data.items():
         setattr(entry, field, value)
 

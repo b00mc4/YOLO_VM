@@ -16,6 +16,8 @@ from app.core.error_messages import WhitelistErrors
 from app.core.scope_utils import resolve_village_id, build_scope_filters
 from app.core.db_utils import escape_like
 
+_NON_NULLABLE_UPDATE_FIELDS = frozenset({"name", "license_plate", "province"})
+
 async def _get_entry_or_404(db: AsyncSession, entry_id: uuid.UUID) -> Whitelist:
     result = await db.execute(select(Whitelist).where(Whitelist.id == entry_id))
     entry = result.scalar_one_or_none()
@@ -152,7 +154,11 @@ async def update_whitelist_entry(
     entry = await _get_entry_or_404(db, entry_id)
     verify_village_scope(current_user, entry.village_id)
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = {
+        field: value
+        for field, value in payload.model_dump(exclude_unset=True).items()
+        if value is not None or field not in _NON_NULLABLE_UPDATE_FIELDS
+    }
     for field, value in update_data.items():
         setattr(entry, field, value)
 

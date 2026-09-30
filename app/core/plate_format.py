@@ -3,7 +3,9 @@ from pydantic import AfterValidator, BeforeValidator
 
 from app.core.regex_patterns import _THAI_PLATE_PATTERN
 
-def _normalize_string(v: str) -> str:
+def _normalize_string(v: object) -> object:
+    if not isinstance(v, str):
+        return v
     return v.strip().upper()
 
 def _validate_thai_plate(v: str) -> str:

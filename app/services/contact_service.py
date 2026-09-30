@@ -25,6 +25,8 @@ from app.core.config import get_settings
 settings = get_settings()
 from app.core.regex_patterns import _THAI_ENG_PATTERN
 
+_NON_NULLABLE_UPDATE_FIELDS = frozenset({"content_type", "value"})
+
 async def _get_user_or_404(db: AsyncSession, user_id: uuid.UUID) -> User:
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -308,7 +310,11 @@ async def update_contact(
     contact, owner = await _get_contact_or_404(db, contact_id)
     _verify_contact_write_scope(current_user, contact, owner)
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = {
+        field: value
+        for field, value in payload.model_dump(exclude_unset=True).items()
+        if value is not None or field not in _NON_NULLABLE_UPDATE_FIELDS
+    }
     merged_content_type = update_data.get("content_type", contact.content_type)
 
     if merged_content_type != ContactType.OTHER and "custom_label" not in update_data:

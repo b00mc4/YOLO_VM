@@ -5,6 +5,7 @@ class Common:
     RESOURCE_ALREADY_EXISTS = "ข้อมูลนี้มีอยู่ในระบบแล้ว"
     REFERENCED_RESOURCE_NOT_FOUND = "ข้อมูลที่อ้างอิงไม่มีอยู่ในระบบ"
     CONSTRAINT_VIOLATION = "ข้อมูลไม่ผ่านเงื่อนไขของระบบ"
+    REQUIRED_FIELD_NULL = "ข้อมูลที่จำเป็นต้องไม่เป็นค่าว่าง"
     INTERNAL_SERVER_ERROR = "เกิดข้อผิดพลาดภายในระบบ"
     TOO_MANY_REQUESTS = "มีการเรียกใช้งานถี่เกินไป กรุณาลองใหม่ภายหลัง"
     INSUFFICIENT_PERMISSIONS = "สิทธิ์ไม่เพียงพอ"

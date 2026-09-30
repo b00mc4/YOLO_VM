@@ -2,22 +2,25 @@ from __future__ import annotations
 import asyncio
 import logging
 from fastapi import HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from onvif import ONVIFCamera
 from yarl import URL
 from zeep.exceptions import Fault, TransportError
+from zeep.transports import Transport
 from app.core.error_messages import OnvifErrors
 from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT_SECONDS = 15.0
+_SOAP_REQUEST_TIMEOUT_SECONDS = 10.0
 _STREAM_SETUP = {
     "Stream": "RTP-Unicast",
     "Transport": {"Protocol": "RTSP"},
 }
 
 
-async def _fetch_device_info(camera: ONVIFCamera) -> tuple[str | None, str | None]:
+def _fetch_device_info(camera: ONVIFCamera) -> tuple[str | None, str | None]:
     try:
         device_info = camera.devicemgmt.GetDeviceInformation()
     except Exception:
@@ -25,7 +28,7 @@ async def _fetch_device_info(camera: ONVIFCamera) -> tuple[str | None, str | Non
     return getattr(device_info, "Manufacturer", None), getattr(device_info, "Model", None)
 
 
-async def _fetch_stream_uri(media_service, profile_token: str) -> str:
+def _fetch_stream_uri(media_service, profile_token: str) -> str:
     request = media_service.create_type("GetStreamUri")
     request.ProfileToken = profile_token
     request.StreamSetup = _STREAM_SETUP
@@ -53,13 +56,15 @@ def _with_rtsp_credentials(rtsp_uri: str, username: str, password: str) -> str:
     return str(URL(rtsp_uri).with_user(username).with_password(password))
 
 
-async def _probe(host: str, port: int, username: str, password: str) -> dict:
-    camera = ONVIFCamera(host, port, username, password, no_cache=True)
+def _probe(host: str, port: int, username: str, password: str) -> dict:
+    transport = Transport(
+        timeout=_SOAP_REQUEST_TIMEOUT_SECONDS,
+        operation_timeout=_SOAP_REQUEST_TIMEOUT_SECONDS,
+    )
+    camera = ONVIFCamera(host, port, username, password, no_cache=True, transport=transport)
 
     try:
-        camera.update_xaddrs()
-
-        manufacturer, model = await _fetch_device_info(camera)
+        manufacturer, model = _fetch_device_info(camera)
 
         media_service = camera.create_media_service()
         profiles = media_service.GetProfiles()
@@ -72,7 +77,7 @@ async def _probe(host: str, port: int, username: str, password: str) -> dict:
 
         profile_results = []
         for profile in profiles:
-            rtsp_uri = await _fetch_stream_uri(media_service, profile.token)
+            rtsp_uri = _fetch_stream_uri(media_service, profile.token)
             
             parsed_rtsp = urlsplit(rtsp_uri)
             netloc = host
@@ -103,7 +108,8 @@ async def _probe(host: str, port: int, username: str, password: str) -> dict:
 async def probe_camera(host: str, port: int, username: str, password: str) -> dict:
     try:
         return await asyncio.wait_for(
-            _probe(host, port, username, password), timeout=_PROBE_TIMEOUT_SECONDS
+            run_in_threadpool(_probe, host, port, username, password),
+            timeout=_PROBE_TIMEOUT_SECONDS,
         )
     except HTTPException:
         raise
