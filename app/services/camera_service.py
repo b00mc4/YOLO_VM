@@ -913,6 +913,9 @@ async def _check_stream_server(db: AsyncSession) -> bool:
     village_ids = list(result.scalars().all())
 
     await audit_service.log_action(db, request=None, action=action, detail=detail)
+    for village_id in village_ids:
+        await notification_service.notify_village(db, village_id, action.value, detail, payload)
+    await notification_service.notify_superadmins(db, action.value, detail, payload)
     await db.commit()
 
     _stream_server.is_down = observed_down
