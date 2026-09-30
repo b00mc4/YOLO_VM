@@ -869,7 +869,7 @@ class _StreamServerState:
 _stream_server = _StreamServerState()
 
 
-async def _announce_stream_server_change(db: AsyncSession, failure: StreamFailure | None) -> None:
+def _describe_stream_server_change(failure: StreamFailure | None) -> tuple[AuditLogAction, str, dict]:
     if failure is None:
         action = AuditLogAction.streaming_server_recovered
         detail = "ระบบสตรีมมิ่งกลับมาทำงานปกติ"
@@ -882,23 +882,16 @@ async def _announce_stream_server_change(db: AsyncSession, failure: StreamFailur
         "reason": failure.value if failure is not None else None,
         "message": detail,
     }
+    return action, detail, payload
 
-    result = await db.execute(select(Group.id).where(Group.is_active.is_(True)))
-    village_ids = list(result.scalars().all())
 
-    for village_id in village_ids:
-        await audit_service.log_action(
-            db,
-            request=None,
-            action=action,
-            detail=detail,
-            village_id=village_id,
-        )
-    await db.commit()
-
-    for village_id in village_ids:
-        await channel_service.alerts.publish(village_id, action.value, payload)
-    await channel_service.alerts.publish_global(action.value, payload)
+async def _publish_stream_server_change(village_ids: list[uuid.UUID], action: AuditLogAction, payload: dict) -> None:
+    try:
+        for village_id in village_ids:
+            await channel_service.alerts.publish(village_id, action.value, payload)
+        await channel_service.alerts.publish_global(action.value, payload)
+    except Exception:
+        logger.exception("Failed to publish %s event", action.value)
 
 
 async def _check_stream_server(db: AsyncSession) -> bool:
@@ -914,7 +907,14 @@ async def _check_stream_server(db: AsyncSession) -> bool:
     if _stream_server.streak < need:
         return not observed_down
 
-    await _announce_stream_server_change(db, failure)
+    action, detail, payload = _describe_stream_server_change(failure)
+
+    result = await db.execute(select(Group.id).where(Group.is_active.is_(True)))
+    village_ids = list(result.scalars().all())
+
+    await audit_service.log_action(db, request=None, action=action, detail=detail)
+    await db.commit()
+
     _stream_server.is_down = observed_down
     _stream_server.streak = 0
 
@@ -924,6 +924,7 @@ async def _check_stream_server(db: AsyncSession) -> bool:
     else:
         logger.info("MediaMTX streaming server recovered")
 
+    await _publish_stream_server_change(village_ids, action, payload)
     return not observed_down
 
 
