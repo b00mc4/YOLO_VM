@@ -52,13 +52,12 @@ async def list_cameras(
 
 @router.post("/resync-all", response_model=MessageResponse)
 async def resync_all_cameras(
-    request: Request,
     background_tasks: BackgroundTasks,
     village_id: uuid.UUID | None = Query(default=None),
     current_user: User = Depends(require_roles(*_WRITE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    await camera_service.resync_all_cameras(db, request, background_tasks, current_user, village_id)
+    await camera_service.resync_all_cameras(db, background_tasks, current_user, village_id)
     return MessageResponse(detail="กำลังดำเนินการ Resync กล้องเบื้องหลัง")
 
 
@@ -98,9 +97,6 @@ async def update_camera(
     db: AsyncSession = Depends(get_db),
 ):
     return await camera_service.update_camera(db, request, background_tasks, current_user, camera_id, payload)
-
-
-
 
 @router.post("/{camera_id}/verification-check", response_model=CameraVerificationCheckRead)
 async def check_camera_verification(

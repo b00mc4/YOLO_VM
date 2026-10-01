@@ -320,9 +320,7 @@ async def get_camera_stream_token(
     current_user: User,
     camera_id: uuid.UUID,
 ) -> CameraStreamTokenRead:
-    result = await db.execute(
-        select(Camera.village_id, Camera.is_active).where(Camera.id == camera_id)
-    )
+    result = await db.execute(select(Camera.village_id, Camera.is_active).where(Camera.id == camera_id))
     row = result.one_or_none()
 
     if row is None:
@@ -493,9 +491,7 @@ async def delete_camera(db, request, background_tasks, current_user, camera_id):
     background_tasks.add_task(_sync_camera_delete, camera_id_value, village_id, camera_name)
 
 
-def _build_resync_scope_filters(
-    current_user: User, village_id_filter: uuid.UUID | None
-) -> list:
+def _build_resync_scope_filters(current_user: User, village_id_filter: uuid.UUID | None) -> list:
     if current_user.role == UserRole.SUPERADMIN:
         if village_id_filter is not None:
             return [Camera.village_id == village_id_filter]
@@ -580,7 +576,6 @@ async def _run_resync_all_cameras_background(
 
 async def resync_all_cameras(
     db: AsyncSession,
-    request: Request,
     background_tasks: BackgroundTasks,
     current_user: User,
     village_id_filter: uuid.UUID | None,

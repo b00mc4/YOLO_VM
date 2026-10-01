@@ -263,7 +263,7 @@ async def rotate_refresh_token(db: AsyncSession, request: Request, raw_refresh_t
     result = await db.execute(
         select(RefreshToken)
         .where(RefreshToken.token_hash == token_hash)
-        .with_for_update()
+        .with_for_update() #ล็อกแถวที่อ่านมา กรณี 2 request ใช้ refresh token ตัวเดียวกันในเวลาเดียวกัน
     )
     stored_token = result.scalar_one_or_none()
 
@@ -382,6 +382,7 @@ async def change_password(
     current_user.hashpassword = await hash_password(new_password)
     current_user.password_changed_at = datetime.now(timezone.utc)
 
+    await invalidate_pending_verify_tokens(db, current_user.id, VerifyType.PASSWORD_RESET)
     await revoke_all_refresh_tokens(db, current_user.id)
 
     await audit_service.log_action(
@@ -492,12 +493,6 @@ async def set_password(db: AsyncSession, raw_token: str, new_password: str) -> s
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=Auth.ACCOUNT_INACTIVE)
 
-    if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=Auth.ACCOUNT_INACTIVE)
-
-    if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=Auth.ACCOUNT_INACTIVE)
-
     user.hashpassword = await hash_password(new_password)
     user.password_changed_at = datetime.now(timezone.utc)
     user.is_verify = True
@@ -539,9 +534,6 @@ async def confirm_email_change(db: AsyncSession, request: Request, raw_token: st
 
     if user is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=Auth.INVALID_OR_EXPIRED_TOKEN)
-
-    if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=Auth.ACCOUNT_INACTIVE)
 
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=Auth.ACCOUNT_INACTIVE)

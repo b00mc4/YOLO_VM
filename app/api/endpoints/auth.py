@@ -45,7 +45,6 @@ _CONFIRM_EMAIL_CHANGE_IP_LIMIT = 20
 _CONFIRM_EMAIL_CHANGE_IP_WINDOW_SECONDS = 10 * 60
 _CHANGE_PASSWORD_IP_LIMIT = 5
 _CHANGE_PASSWORD_IP_WINDOW_SECONDS = 60 * 60
-_LEGACY_REFRESH_COOKIE_PATH = "/api/auth/refresh"
 
 def _delete_refresh_cookie(response: Response, path: str) -> None:
     response.delete_cookie(
@@ -59,8 +58,8 @@ def _delete_refresh_cookie(response: Response, path: str) -> None:
 
 
 def _delete_legacy_refresh_cookie(response: Response) -> None:
-    if settings.auth_refresh_cookie_path != _LEGACY_REFRESH_COOKIE_PATH:
-        _delete_refresh_cookie(response, _LEGACY_REFRESH_COOKIE_PATH)
+    if settings.auth_refresh_cookie_path != "/api/auth/refresh":
+        _delete_refresh_cookie(response, "/api/auth/refresh")
 
 
 def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me: bool) -> None:
@@ -154,12 +153,10 @@ async def forgot_password(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
-    rate_limiter = get_rate_limiter()
-    
     normalized_email = payload.email.strip().lower()
 
     try:
-        rate_limiter.check(f"forgot_cooldown:{normalized_email}", 1, 300)
+        get_rate_limiter().check(f"forgot_cooldown:{normalized_email}", 1, 300)
     except RateLimitExceeded as e:
         minutes_left = int(e.retry_after_seconds // 60) + 1
         raise HTTPException(
@@ -168,7 +165,7 @@ async def forgot_password(
         ) from e
         
     try:
-        rate_limiter.check(f"forgot_daily:{normalized_email}", 3, 86400)
+        get_rate_limiter().check(f"forgot_daily:{normalized_email}", 3, 86400)
     except RateLimitExceeded:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

@@ -93,9 +93,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     verification_resume_task = asyncio.create_task(_resume_camera_verification_background())
     app.state.startup_verification_resume_task = verification_resume_task
 
-    clean_auth_task = asyncio.create_task(
-        _run_background_loop("Auth", _AUTH_CLEANUP_INTERVAL_SECONDS, auth_service.cleanup_expired_refresh_tokens)
-    )
+    clean_auth_task = asyncio.create_task(_run_background_loop("Auth", _AUTH_CLEANUP_INTERVAL_SECONDS, auth_service.cleanup_expired_refresh_tokens))
     app.state.startup_clean_auth_task = clean_auth_task
 
     camera_status_task = asyncio.create_task(

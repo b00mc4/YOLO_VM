@@ -78,11 +78,9 @@ async def _send_email(to_email: str, subject: str, text_body: str, html_body: st
         async with aiosmtplib.SMTP(
             hostname=settings.smtp_host, port=settings.smtp_port
         ) as smtp:
-            # Gmail on port 587 normally requires STARTTLS, but some servers may already be TLS.
             try:
                 await smtp.starttls()
             except Exception as e:
-                # If TLS is already active, ignore the error; otherwise re‑raise.
                 if "already using TLS" not in str(e):
                     raise
             await smtp.login(settings.smtp_user, settings.smtp_password)

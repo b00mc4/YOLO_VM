@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-import time
+from time import monotonic
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -191,7 +191,7 @@ _ALIVE_CACHE_TTL = 3.0
 
 async def check_source_alive(camera_id: uuid.UUID) -> tuple[bool, bool]:
     cid_str = str(camera_id)
-    now = time.time()
+    now = monotonic()
 
     if cid_str in _ALIVE_CACHE:
         entry = _ALIVE_CACHE[cid_str]
@@ -217,6 +217,6 @@ async def check_source_alive(camera_id: uuid.UUID) -> tuple[bool, bool]:
             spawn_background(_trigger_on_demand_pull(camera_id))
         result = False, True
 
-    _ALIVE_CACHE[cid_str] = {"time": time.time(), "data": result}
+    _ALIVE_CACHE[cid_str] = {"time": monotonic(), "data": result}
     return result
 
