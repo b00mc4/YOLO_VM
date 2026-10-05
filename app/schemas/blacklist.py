@@ -3,9 +3,6 @@ import re
 import uuid
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-
-
 from app.core.plate_format import PlateString, ProvinceString
 
 class BlacklistCreate(BaseModel):

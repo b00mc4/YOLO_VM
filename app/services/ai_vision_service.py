@@ -46,11 +46,6 @@ async def push_camera_config(camera_id: uuid.UUID, stream_ai: str, delay: int = 
             "delay": delay,
         }
         headers = {"X-API-Key": settings.ai_vision_api_key}
-        
-        logger.info("--- DEBUG POST /api/camera TO AI VISION ---")
-        logger.info(f"URL: {url}")
-        logger.info(f"Payload: {payload}")
-        logger.info(f"Headers: {headers}")
 
         response = await get_client().post(
             url,

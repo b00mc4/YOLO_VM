@@ -7,7 +7,7 @@ services:
     container_name: village_guard_db
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -16,7 +16,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d YOLO_PROJECT"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,8 +36,6 @@ services:
       TZ: Asia/Bangkok
     volumes:
       - ./storage:/app/storage
-      - ./:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       - db
     networks:
@@ -56,7 +54,7 @@ services:
     ports:
       - "8554:8554"
       - "8888:8888"
-      - "9997:9997"
+      - "127.0.0.1:9997:9997"
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
     networks:

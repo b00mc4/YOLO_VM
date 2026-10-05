@@ -77,7 +77,7 @@ async def authenticate_user(db: AsyncSession, request: Request, username: str, p
     get_rate_limiter().check(rate_limit_key, _LOGIN_USERNAME_LIMIT, _LOGIN_USERNAME_WINDOW_SECONDS)
 
     result = await db.execute(
-        select(User, Group.is_active.label("village_is_active"))
+        select(User, Group.is_active)
         .outerjoin(Group, User.village_id == Group.id)
         .where(User.username == normalized_username)
     )
@@ -184,7 +184,7 @@ def _invalid_refresh_token_error() -> HTTPException:
 
 async def _load_refreshable_user(db: AsyncSession, user_id: uuid.UUID) -> User:
     result = await db.execute(
-        select(User, Group.is_active.label("village_is_active"))
+        select(User, Group.is_active)
         .outerjoin(Group, User.village_id == Group.id)
         .where(User.id == user_id)
     )

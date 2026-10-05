@@ -284,7 +284,6 @@ async def get_camera_status(db: AsyncSession, current_user: User, camera_id: uui
         stream_is_healthy = False
         details.append("Stream is offline")
     elif is_starting:
-        from app.core.url_utils import check_rtsp_stream
         stream_is_healthy = await check_rtsp_stream(camera.stream_ai)
         if stream_is_healthy:
             details.append("Stream is on standby")
@@ -417,16 +416,7 @@ async def update_camera(
                 detail=CameraErrors.NAME_ALREADY_EXISTS,
             )
 
-    if "stream_ai" in update_data and update_data["stream_ai"] != camera.stream_ai:
-        existing_stream_result = await db.execute(select(Camera).where(Camera.stream_ai == update_data["stream_ai"]))
-        if existing_stream_result.scalars().first():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="RTSP URL (stream_ai) is already in use by another camera",
-            )
-
     is_active_changed = "is_active" in update_data and update_data["is_active"] != camera.is_active
-    stream_ai_changed = "stream_ai" in update_data and update_data["stream_ai"] != camera.stream_ai
     delay_changed = "delay" in update_data and update_data["delay"] != camera.delay
 
     for field, value in update_data.items():
@@ -454,7 +444,7 @@ async def update_camera(
     await db.commit()
     await db.refresh(camera)
 
-    if (is_active_changed or stream_ai_changed or delay_changed) and village.is_active:
+    if (is_active_changed  or delay_changed) and village.is_active:
         background_tasks.add_task(
             _sync_camera_update,
             camera.id,
@@ -464,7 +454,7 @@ async def update_camera(
             camera.stream_ai,
             camera.delay if delay_changed else None,
         )
-    elif is_active_changed or stream_ai_changed:
+    elif is_active_changed or delay_changed:
         logger.info(
             "Skipping camera sync for %s: village %s is inactive", camera.id, camera.village_id
         )

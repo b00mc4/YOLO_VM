@@ -50,11 +50,7 @@ async def create_security_alert_ticket(
     return SSETicketResponse(ticket=ticket)
 
 
-@router.post(
-    "/presence/ticket",
-    response_model=PresenceTicketResponse,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/presence/ticket", response_model=PresenceTicketResponse, status_code=status.HTTP_201_CREATED,)
 async def create_presence_ticket(
     request: Request,
     village_id: uuid.UUID | None = Query(default=None),

@@ -35,7 +35,11 @@ async def mediamtx_auth_webhook(request: Request, db: AsyncSession = Depends(get
     query = payload.get("query", "")
 
     if action != "read":
-        return {"status": "ok"}
+        logger.warning(
+            "MediaMTX Webhook: denied action=%s path=%s protocol=%s ip=%s",
+            action, path, payload.get("protocol"), payload.get("ip"),
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Action not allowed")
 
     token = None
     if query:
@@ -56,10 +60,7 @@ async def mediamtx_auth_webhook(request: Request, db: AsyncSession = Depends(get
         del _AUTH_CACHE[cache_key]
 
     try:
-        # Decode the ES256 token that we issued in mediamtx_auth_service
         public_key = mediamtx_auth_service._load_private_key().public_key()
-        
-        # Verify signature and expiration
         decoded = jwt.decode(token, public_key, algorithms=["ES256"])
         
         user_id_str = decoded.get("user_id")
@@ -77,11 +78,9 @@ async def mediamtx_auth_webhook(request: Request, db: AsyncSession = Depends(get
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from e
 
     if user_id == uuid.UUID(int=0):
-        # SYSTEM trigger
         _AUTH_CACHE[cache_key] = time.time()
         return {"status": "ok"}
 
-    # Real-time DB check
     user_result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
     user = user_result.scalars().first()
     if not user:
@@ -92,14 +91,12 @@ async def mediamtx_auth_webhook(request: Request, db: AsyncSession = Depends(get
     if not camera:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Camera inactive or deleted")
 
-    # Check village scope
     from app.services.camera_service import verify_village_scope
     try:
         verify_village_scope(user, camera.village_id)
     except HTTPException:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User lost access to this camera") from None
 
-    # Cleanup stale cache to prevent memory leak
     if len(_AUTH_CACHE) > 5000:
         current_time = time.time()
         stale = [k for k, v in _AUTH_CACHE.items() if current_time - v > _CACHE_TTL]
