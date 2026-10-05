@@ -1,6 +1,6 @@
 [project]
 name = "village-guard-backend"
-version = "0.1.0"
+version = "1.0.0"
 description = "Backend API for the license-plate recognition (YOLO + OCR) village security system"
 requires-python = ">=3.11"
 readme = "README.md"
