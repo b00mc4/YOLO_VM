@@ -45,6 +45,7 @@ _CONFIRM_EMAIL_CHANGE_IP_LIMIT = 20
 _CONFIRM_EMAIL_CHANGE_IP_WINDOW_SECONDS = 10 * 60
 _CHANGE_PASSWORD_IP_LIMIT = 5
 _CHANGE_PASSWORD_IP_WINDOW_SECONDS = 60 * 60
+_LEGACY_REFRESH_COOKIE_PATHS = ("/", "/api/auth/refresh")
 
 def _delete_refresh_cookie(response: Response, path: str) -> None:
     response.delete_cookie(
@@ -58,8 +59,9 @@ def _delete_refresh_cookie(response: Response, path: str) -> None:
 
 
 def _delete_legacy_refresh_cookie(response: Response) -> None:
-    if settings.auth_refresh_cookie_path != "/api/auth/refresh":
-        _delete_refresh_cookie(response, "/api/auth/refresh")
+    for path in _LEGACY_REFRESH_COOKIE_PATHS:
+        if path != settings.auth_refresh_cookie_path:
+            _delete_refresh_cookie(response, path)
 
 
 def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me: bool) -> None:
