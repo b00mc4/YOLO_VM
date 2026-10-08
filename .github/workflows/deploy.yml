@@ -24,3 +24,7 @@ jobs:
           # รีเฟรช Nginx ให้จำ IP ใหม่ของ Container ที่ถูก Rebuild
           docker compose restart nginx
 
+          docker image prune -f
+          
+          docker builder prune -f --filter "until=168h"
+
