@@ -81,7 +81,10 @@ openssl ecparam -name prime256v1 -genkey -noout | base64 -w0  # ใช้กั�
 ```bash
 docker compose up -d --build
 docker compose ps        # ทุก service ต้องขึ้นสถานะ running
+docker compose exec -u root api chown -R appuser:appgroup /app/storage
 ```
+
+คำสั่งสุดท้ายให้ api เขียนรูปลง `storage/` ได้ เพราะ Docker สร้างโฟลเดอร์นี้เป็นของ root แต่ api รันด้วย `appuser` ที่ไม่ใช่ root
 
 **5) สร้างตารางในฐานข้อมูล**
 
@@ -174,27 +177,40 @@ docker compose up -d
 
 ### Backup
 
-ฐานข้อมูล
+เก็บไฟล์ไว้ที่ `~/backups` ห้ามเก็บในโฟลเดอร์โปรเจกต์ เพราะไฟล์จะถูก copy เข้า image ของ api ตอน build และต้อง backup ฐานข้อมูลกับรูปคู่กันเสมอ เพราะ CarTABLE เก็บ path ของรูปใน `storage/`
 
 ```bash
-docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > backup_$(date +%F).dump
+mkdir -p ~/backups
+docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > ~/backups/db_$(date +%F).dump
+tar -cf ~/backups/storage_$(date +%F).tar --listed-incremental=$HOME/backups/storage.snar storage/
 ```
 
-รูปภาพ (รูปตรวจจับและ avatar ทั้งหมดอยู่ใน `storage/` ในโฟลเดอร์โปรเจกต์)
+รูปใช้ backup แบบ incremental ครั้งแรกได้ไฟล์เต็ม ครั้งต่อไปเก็บเฉพาะรูปใหม่ ห้ามลบ `storage.snar` และห้ามกด Ctrl+C ระหว่าง tar ทำงาน
+
+ตรวจไฟล์ (คำสั่งแรกต้องได้ 12 คำสั่งที่สองต้องขึ้น `STORAGE_OK`)
 
 ```bash
-tar -czf storage_$(date +%F).tar.gz storage/
+docker compose exec -T db pg_restore -l < ~/backups/db_$(date +%F).dump | grep -c "TABLE DATA"
+tar -tf ~/backups/storage_$(date +%F).tar > /dev/null && echo STORAGE_OK
 ```
 
-ควร backup ทั้งสองอย่างคู่กัน เพราะ CarTABLE เก็บ path ของรูปใน `storage/`
+copy ออกนอก VM ทุกครั้ง (รันจากเครื่องที่ใช้เก็บสำเนา)
 
-### Restore ฐานข้อมูล
+```bash
+scp -p <user>@<ip-ของ-vm>:~/backups/* <โฟลเดอร์ปลายทาง>/
+```
+
+### Restore
 
 ```bash
 docker compose stop api
-docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < backup_YYYY-MM-DD.dump
+docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < ~/backups/db_YYYY-MM-DD.dump
+for f in ~/backups/storage_*.tar; do sudo tar -xf "$f" --listed-incremental=/dev/null; done
 docker compose start api
+docker compose exec -u root api chown -R appuser:appgroup /app/storage
 ```
+
+ให้รันในโฟลเดอร์โปรเจกต์ รูปที่ไม่มีใน backup ล่าสุดจะถูกลบ เพื่อให้ `storage/` ตรงกับฐานข้อมูล คำสั่งสุดท้ายคืนสิทธิ์ให้ api เขียนรูปใหม่ได้ ถ้ารูปมีจำนวนมากอาจใช้เวลาหลายนาที
 
 ### เข้าฐานข้อมูลหรือ MediaMTX API
 

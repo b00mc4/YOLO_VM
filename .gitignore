@@ -40,3 +40,5 @@ auto.key
 
 GEMINI.md
 .agents/
+*.dump
+storage_*.tar*

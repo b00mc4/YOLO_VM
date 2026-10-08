@@ -26,3 +26,5 @@ storage/*
 # OS generated files
 .DS_Store
 Thumbs.db
+*.dump
+storage_*.tar*
