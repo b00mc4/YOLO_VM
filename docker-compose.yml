@@ -45,8 +45,6 @@ services:
     image: bluenviron/mediamtx:latest
     container_name: village_guard_mediamtx
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       MTX_AUTHINTERNALUSERS_0_USER: ${MEDIAMTX_API_USER}
       MTX_AUTHINTERNALUSERS_0_PASS: ${MEDIAMTX_API_PASSWORD}

@@ -45,7 +45,6 @@ _CONFIRM_EMAIL_CHANGE_IP_LIMIT = 20
 _CONFIRM_EMAIL_CHANGE_IP_WINDOW_SECONDS = 10 * 60
 _CHANGE_PASSWORD_IP_LIMIT = 5
 _CHANGE_PASSWORD_IP_WINDOW_SECONDS = 60 * 60
-_LEGACY_REFRESH_COOKIE_PATHS = ("/", "/api/auth/refresh")
 
 def _delete_refresh_cookie(response: Response, path: str) -> None:
     response.delete_cookie(
@@ -58,18 +57,11 @@ def _delete_refresh_cookie(response: Response, path: str) -> None:
     )
 
 
-def _delete_legacy_refresh_cookie(response: Response) -> None:
-    for path in _LEGACY_REFRESH_COOKIE_PATHS:
-        if path != settings.auth_refresh_cookie_path:
-            _delete_refresh_cookie(response, path)
-
-
 def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me: bool) -> None:
     cookie_kwargs = {}
     if remember_me:
         cookie_kwargs["max_age"] = settings.refresh_token_expire_days * 24 * 60 * 60
 
-    _delete_legacy_refresh_cookie(response)
     response.set_cookie(
         key="refresh_token",
         value=raw_refresh_token,
@@ -84,7 +76,6 @@ def _set_refresh_cookie(response: Response, raw_refresh_token: str, remember_me:
 
 def _clear_refresh_cookie(response: Response) -> None:
     _delete_refresh_cookie(response, settings.auth_refresh_cookie_path)
-    _delete_legacy_refresh_cookie(response)
 
 
 @router.post(

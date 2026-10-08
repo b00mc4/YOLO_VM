@@ -89,7 +89,7 @@ async def authenticate_user(db: AsyncSession, request: Request, username: str, p
             village_is_active = True
     else:
         user = None
-        village_is_active = True
+        village_is_active = False
 
     hash_to_check = (
         user.hashpassword
@@ -263,8 +263,15 @@ async def rotate_refresh_token(db: AsyncSession, request: Request, raw_refresh_t
     result = await db.execute(
         select(RefreshToken)
         .where(RefreshToken.token_hash == token_hash)
-        .with_for_update() #ล็อกแถวที่อ่านมา กรณี 2 request ใช้ refresh token ตัวเดียวกันในเวลาเดียวกัน
-    )
+        .with_for_update() #จะล็อกแถว token ที่อ่านมา ไว้จนกว่าจะ commit
+    )#ปัญหาที่กัน: ผู้ใช้เปิด 2 แท็บ แล้วทั้งสองแท็บ refresh พร้อมกันด้วย token เดียวกัน
+#------ถ้าไม่ล็อก: ทั้งสอง request อ่าน token เดิมได้ ต่างคนต่างสร้าง token ใหม่ 
+# ตัวหลังเขียนทับตัวแรก browser อาจเก็บตัวที่ถูกทับไปแล้ว ครั้งต่อไประบบจะคิดว่า token 
+# ถูกขโมยมาใช้ซ้ำ แล้วเตะผู้ใช้ออก
+#------ถ้าล็อก: request ที่สองต้องรอจนตัวแรกเสร็จ พอได้อ่าน token ก็ถูกเปลี่ยนไปแล้ว 
+# ระบบรู้ว่าเพิ่งเปลี่ยนไปภายใน 30 วินาที จึงให้แค่ access token ใหม่ และไม่สร้าง 
+# refresh token ตัวที่สอง
+#ผลคือ มี token ใหม่แค่ตัวเดียว ไม่ทับกัน และผู้ใช้ไม่โดนเด้งออก
     stored_token = result.scalar_one_or_none()
 
     if stored_token is None:

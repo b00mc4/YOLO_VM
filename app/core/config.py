@@ -9,19 +9,19 @@ class Settings(BaseSettings):
     database_url: str
 
     jwt_secret: str
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 15
-    refresh_token_expire_days: int = 30
-    refresh_token_session_expire_hours: int = Field(default=12, ge=1)
+    jwt_algorithm: str
+    access_token_expire_minutes: int
+    refresh_token_expire_days: int
+    refresh_token_session_expire_hours: int 
     refresh_reuse_grace_seconds: float = Field(default=30, gt=0)
     auth_max_sessions_per_user: int = Field(default=5, ge=1)
 
-    cookie_samesite: Literal["lax", "strict", "none"] = "lax"
-    cookie_secure: bool = False
-    cookie_domain: str | None = None
+    cookie_samesite: Literal["lax", "strict", "none"] 
+    cookie_secure: bool 
+    cookie_domain: str
 
-    trust_proxy_headers: bool = False
-    trusted_proxy_hops: int = Field(default=1, ge=1)
+    trust_proxy_headers: bool 
+    trusted_proxy_hops: int 
 
     sse_ticket_expire_seconds: int = 30
     sse_revalidation_interval_seconds: int = 30
