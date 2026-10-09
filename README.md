@@ -294,6 +294,6 @@ uvicorn app.main:app --reload
 
 | ส่วนงาน | ผู้รับผิดชอบ | ติดต่อ |
 | :--- | :--- | :--- |
-| Backend | `<ชื่อ>` | `<อีเมล>` |
-| Frontend | `<ชื่อ>` | `<อีเมล>` |
-| AI Vision | `<ชื่อ>` | `<อีเมล>` |
+| Backend | ภูมิยศ ลาวัณย์วิสุทธิ์ | phumyod.lawanvisut@gmail.com |
+| Frontend | ชนาพร ชูผล | chana.choopol@gmail.com |
+| AI Vision | สพล โชควัฒนาพร | saphon.chokwattanapron@gmail.com |
