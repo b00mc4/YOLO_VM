@@ -8,8 +8,10 @@ Backend API ของระบบรักษาความปลอดภั�
 | :--- | :--- |
 | README.md (ไฟล์นี้) | ติดตั้ง อัปเดต ดูแลระบบ และแก้ปัญหาเบื้องต้น |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | สถาปัตยกรรม ฐานข้อมูล สิทธิ์ผู้ใช้ และ flow การทำงานภายใน |
+| [docs/HandOver.pdf](docs/HandOver.pdf) | เอกสารส่งมอบงานส่วน Backend: ขอบเขตงาน รายการโมดูลที่ส่งมอบ ที่เก็บโค้ดและสภาพแวดล้อม และคู่มือรับมือเมื่อระบบขัดข้อง |
+| [docs/API_Document_Planetcomm_LPR.pdf](docs/API_Document_Planetcomm_LPR.pdf) | เอกสาร API ฉบับเต็ม (v1.0.0): 69 endpoint ใน 12 หมวด การยืนยันตัวตน สิทธิ์แต่ละ role และรูปแบบ error |
 | [.env.example](.env.example) | คำอธิบายตัวแปรตั้งค่าทุกตัว |
-| `/docs` บนเซิร์ฟเวอร์ | Swagger: รายละเอียด request / response ของทุก endpoint |
+| `/docs` บนเซิร์ฟเวอร์ | Swagger: ทดลองเรียก API ได้จริง และตรงกับโค้ดที่รันอยู่เสมอ |
 
 ---
 
@@ -40,7 +42,41 @@ nginx ส่ง request ต่อตาม path ดังนี้
 
 ---
 
-## 2. สิ่งที่ต้องมีก่อนติดตั้ง
+## 2. โครงสร้างโฟลเดอร์
+
+```text
+YOLO/
+├── app/                         # โค้ด FastAPI ทั้งหมด
+│   ├── main.py                  # สร้าง app, middleware และ lifespan
+│   ├── api/endpoints/           # router แยกตามหมวด (auth, users, camera, detection, ...)
+│   ├── core/                    # config, ความปลอดภัย, session, rate limit, SSE
+│   ├── db/                      # การเชื่อมต่อฐานข้อมูล
+│   ├── models/                  # ORM model (ตารางในฐานข้อมูล)
+│   ├── schemas/                 # Pydantic schema ของ request / response
+│   └── services/                # business logic
+├── alembic/versions/            # ไฟล์ migration ของฐานข้อมูล
+├── docs/                        # เอกสารประกอบระบบ (ตารางด้านบน)
+│   ├── ARCHITECTURE.md
+│   ├── HandOver.pdf
+│   └── API_Document_Planetcomm_LPR.pdf
+├── nginx/nginx.conf             # reverse proxy (มี IP ของ Frontend / AI Vision ที่ต้องแก้ตอนติดตั้ง)
+├── .github/workflows/deploy.yml # deploy อัตโนมัติเมื่อ push เข้า main
+├── storage/                     # รูปตรวจจับและ avatar สร้างตอนรัน ไม่อยู่ใน git
+├── docker-compose.yml           # service: nginx, api, db, mediamtx
+├── dockerfile                   # image ของ api
+├── mediamtx.yml                 # config MediaMTX
+├── create_superadmin.py         # สร้าง superadmin คนแรก
+├── pyproject.toml               # dependencies และ config ruff
+├── alembic.ini                  # config Alembic
+├── .env.example                 # ต้นแบบไฟล์ตั้งค่า
+└── .env                         # ค่าตั้งจริง สร้างเองจาก .env.example ไม่อยู่ใน git
+```
+
+รายละเอียดระดับไฟล์และหน้าที่ของแต่ละ service อยู่ใน [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) หัวข้อ 3
+
+---
+
+## 3. สิ่งที่ต้องมีก่อนติดตั้ง
 
 - เครื่อง Linux ที่ติดตั้ง Docker Engine และ Docker Compose v2 (ใช้คำสั่ง `docker compose`)
 - `git` และ `openssl` (ใช้สร้าง key)
@@ -50,7 +86,7 @@ nginx ส่ง request ต่อตาม path ดังนี้
 
 ---
 
-## 3. ติดตั้งครั้งแรก
+## 4. ติดตั้งครั้งแรก
 
 **1) ดึงโค้ด**
 
@@ -122,7 +158,7 @@ docker compose exec api python -c "import urllib.request; print(urllib.request.u
 
 ---
 
-## 4. การอัปเดตระบบ
+## 5. การอัปเดตระบบ
 
 ### อัตโนมัติ (GitHub Actions)
 
@@ -152,11 +188,11 @@ docker compose exec api alembic upgrade head
 docker compose restart nginx
 ```
 
-ก่อนอัปเดตที่มี migration ควร backup ฐานข้อมูลก่อนเสมอ (หัวข้อ 5)
+ก่อนอัปเดตที่มี migration ควร backup ฐานข้อมูลก่อนเสมอ (หัวข้อ 6)
 
 ---
 
-## 5. งานดูแลประจำ
+## 6. งานดูแลประจำ
 
 ### ดู log และสถานะ
 
@@ -248,7 +284,7 @@ docker system df
 
 ---
 
-## 6. แก้ปัญหาเบื้องต้น
+## 7. แก้ปัญหาเบื้องต้น
 
 | อาการ | สาเหตุที่พบบ่อย | วิธีแก้ |
 | :--- | :--- | :--- |
@@ -271,7 +307,7 @@ docker system df
 
 ---
 
-## 7. สำหรับนักพัฒนา
+## 8. สำหรับนักพัฒนา
 
 รัน api บนเครื่องโดยไม่ใช้ Docker (ต้องมี PostgreSQL และ MediaMTX ที่เข้าถึงได้)
 
@@ -287,10 +323,11 @@ uvicorn app.main:app --reload
 - ตรวจรูปแบบโค้ด: `ruff check .`
 - แก้ model แล้วสร้าง migration: `alembic revision --autogenerate -m "คำอธิบาย"` จากนั้นเปิดตรวจไฟล์ใน `alembic/versions/` ทุกครั้ง ให้สร้างบนเครื่องนักพัฒนาแล้ว commit อย่าสร้างผ่าน `docker compose exec api` เพราะไฟล์จะอยู่แค่ใน container และหายเมื่อ build ใหม่
 - โครงสร้างโค้ดและ flow ภายใน: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- รายละเอียด request / response ของทุก endpoint: [docs/API_Document_Planetcomm_LPR.pdf](docs/API_Document_Planetcomm_LPR.pdf)
 
 ---
 
-## 8. ทีมผู้พัฒนา
+## 9. ทีมผู้พัฒนา
 
 | ส่วนงาน | ผู้รับผิดชอบ | ติดต่อ |
 | :--- | :--- | :--- |
