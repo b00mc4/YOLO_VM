@@ -7,6 +7,7 @@ on:
 
 jobs:
   deploy:
+    if: github.repository == 'b00mc4/YOLO_VM'
     runs-on: self-hosted # ระบุให้ใช้ Runner บน VM ของเราที่เพิ่งตั้งค่าไป
     
     steps:
